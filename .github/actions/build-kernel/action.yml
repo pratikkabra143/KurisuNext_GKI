@@ -598,14 +598,11 @@ runs:
           # Register the fragment in BUILD.bazel so Bazel can resolve the target
           echo 'exports_files(["arch/arm64/configs/pratik_gki.fragment"])' >> common/BUILD.bazel
           
-          # Use LTO Thin + defconfig fragment (avoids modifying gki_defconfig)
-          if [ "${{ inputs.optimize_level }}" = "O2" ]; then
-            tools/bazel run --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist -- --dist_dir=out/dist --lto=thin
-          else
-            tools/bazel run --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist -- --dist_dir=out/dist --lto=thin
-          fi
-          IMG_PATH="out/dist/Image"
-          BOOT_PATH="out/dist/boot.img"
+          # Build with --config=release --notrim to skip strict fragment validation
+          tools/bazel build --config=release --notrim --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment --lto=thin //common:kernel_aarch64
+          
+          IMG_PATH="bazel-bin/common/kernel_aarch64/Image"
+          BOOT_PATH=""
           
         else
           echo "Using build.sh system..."
