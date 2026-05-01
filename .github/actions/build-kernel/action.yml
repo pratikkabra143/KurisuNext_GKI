@@ -361,10 +361,10 @@ runs:
           cat "$PATCHES_DIR/common/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward || true
         fi
         
-        echo "Patching add_limitation_scaling_min_freq.patch!"
-        patch -p1 -F3 --forward < "$PATCHES_DIR/common/add_limitation_scaling_min_freq.patch" || true
-        echo "Patching re_write_limitation_scaling_min_freq.patch!"
-        patch -p1 -F3 --forward < "$PATCHES_DIR/common/re_write_limitation_scaling_min_freq.patch" || true
+        # echo "Patching add_limitation_scaling_min_freq.patch!"
+        # patch -p1 -F3 --forward < "$PATCHES_DIR/common/add_limitation_scaling_min_freq.patch" || true
+        # echo "Patching re_write_limitation_scaling_min_freq.patch!"
+        # patch -p1 -F3 --forward < "$PATCHES_DIR/common/re_write_limitation_scaling_min_freq.patch" || true
         echo "Patching adjust_cpu_scan_order.patch!"
         patch -p1 -F3 --forward < "$PATCHES_DIR/common/adjust_cpu_scan_order.patch" || true
         echo "Patching avoid_extra_s2idle_wake_attempts.patch!"
@@ -383,8 +383,8 @@ runs:
         patch -p1 -F3 --forward < "$PATCHES_DIR/common/silence_irq_cpu_logspam.patch" || true
         echo "Patching silence_system_logspam.patch!"
         patch -p1 -F3 --forward < "$PATCHES_DIR/common/silence_system_logspam.patch" || true
-        echo "Patching use_unlikely_wrap_cpufreq.patch!"
-        patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
+        # echo "Patching use_unlikely_wrap_cpufreq.patch!"
+        # patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
         
         echo "✅ Other patches applied"
         echo "::endgroup::"
