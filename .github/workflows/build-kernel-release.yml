@@ -452,8 +452,6 @@ jobs:
           if [ "${{ inputs.feature_susfs }}" == "true" ]; then
             cat << EOF >> release_notes.md
           - **SUSFS** - Advanced hiding and security features
-          - **Magic Mount Support** - Seamless file system modifications
-          - **Manual Hooks** - scope_min_manual_hooks_v1.4 for better compatibility
           EOF
           fi
           
@@ -471,19 +469,16 @@ jobs:
             cat << EOF >> release_notes.md
           - **SUSFS Hide Features**:
             - ✅ SUS_PATH - Hide suspicious paths
-            - ✅ SUS_MOUNT - Hide mount points (No Cli Support)
+            - ✅ SUS_MOUNT - Hide mount points
             - ✅ SUS_KSTAT - Spoof kernel statistics
             - ✅ SPOOF_UNAME - Kernel version spoofing
             - ✅ SPOOF_CMDLINE - Boot parameters spoofing
             - ✅ OPEN_REDIRECT - File access redirection
             - ✅ SUS_MAP - Memory mapping protection
-            - ✅ AVC_SPOOF - Spoof Procfs avc denial logs
           EOF
           fi
           
-          cat << EOF >> release_notes.md
-          - **Ptrace Leak Fix** - For kernels < 5.16
-          EOF
+
           
           if [ "${{ inputs.feature_unicode }}" == "true" ]; then
             cat << EOF >> release_notes.md

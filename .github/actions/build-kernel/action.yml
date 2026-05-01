@@ -296,25 +296,18 @@ runs:
           fi
         fi
         
-        # Add SUSFS configs
+        # Add SUSFS configs (v2.0.0+ only)
         {
           echo "CONFIG_KSU_SUSFS=y"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
           echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
           echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
           echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
           echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
           echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-          echo "CONFIG_KSU_SUSFS_SUS_SU=n"
         } >> "$FRAGMENT_FILE"
 
     - name: Apply Other Patches
@@ -554,13 +547,10 @@ runs:
         cd "$GKI_ROOT/common"
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=n" >> "$FRAGMENT_FILE"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=y" >> "$FRAGMENT_FILE"
         else
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "$FRAGMENT_FILE"
-          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "$FRAGMENT_FILE"
         fi
         cat >> "$FRAGMENT_FILE" <<EOF
-        CONFIG_OPTIMIZE_INLINING=y
         CONFIG_FRAME_WARN=0
         CONFIG_TRACEPOINTS=y
         EOF
@@ -577,11 +567,22 @@ runs:
         
         # Build Timestamp support
         if [ -n "${{ inputs.build_timestamp }}" ]; then
-          export KBUILD_BUILD_TIMESTAMP="${{ inputs.build_timestamp }}"
-          echo "📅 Using custom build timestamp: $KBUILD_BUILD_TIMESTAMP"
+          DATESTR="${{ inputs.build_timestamp }}"
+          echo "📅 Using custom build timestamp: $DATESTR"
         else
-          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
-          echo "📅 Using current UTC build timestamp: $KBUILD_BUILD_TIMESTAMP"
+          DATESTR="$(TZ='UTC' date +'%a %b %d %T %Z %Y')"
+          echo "📅 Using current UTC build timestamp: $DATESTR"
+        fi
+        export KBUILD_BUILD_TIMESTAMP="$DATESTR"
+        echo "KBUILD_BUILD_TIMESTAMP=$DATESTR" >> $GITHUB_ENV
+        echo "KBUILD_BUILD_VERSION=1" >> $GITHUB_ENV
+        
+        # Patch mkcompile_h to hardcode timestamp (survives Bazel sandbox)
+        MKCOMPILE="common/scripts/mkcompile_h"
+        if [ -f "$MKCOMPILE" ]; then
+          if grep -q 'UTS_VERSION=' "$MKCOMPILE"; then
+            perl -pi -e "s{UTS_VERSION=\"\\\$\\\(.*?\\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $DATESTR\"}" "$MKCOMPILE"
+          fi
         fi
         
         # Build System Selector
@@ -593,13 +594,31 @@ runs:
         
         if [ -f "tools/bazel" ]; then
           echo "Using Bazel build system..."
+          # Strip strict GKI validation checks that block custom configs
+          sed -i 's/check_defconfig//' common/build.config.gki 2>/dev/null || true
+          sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' common/build.config.gki.aarch64 2>/dev/null || true
+          sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' common/build.config.gki.aarch64 2>/dev/null || true
+          sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' common/build.config.gki.aarch64 2>/dev/null || true
+          sed -i '/protected_exports_list.*abi_gki_protected_exports_aarch64/d' common/BUILD.bazel
+          sed -i '/kmi_symbol_list_strict_mode/d' common/BUILD.bazel
+          rm -rf common/android/abi_gki_protected_exports_* 2>/dev/null || true
+          # Remove -dirty / -maybe-dirty from version strings
+          sed -i 's/-dirty//' common/scripts/setlocalversion 2>/dev/null || true
+          sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
+          
           # Copy fragment into the kernel source tree for Bazel to reference
           cp "$FRAGMENT_FILE" common/arch/arm64/configs/pratik_gki.fragment
           # Register the fragment in BUILD.bazel so Bazel can resolve the target
           echo 'exports_files(["arch/arm64/configs/pratik_gki.fragment"])' >> common/BUILD.bazel
           
-          # Build with --config=release --notrim to skip strict fragment validation
-          tools/bazel build --config=release --notrim --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment --lto=thin //common:kernel_aarch64
+          # LTO selection: 6.12+ uses lto=none (Rust modules incompatible with thin LTO)
+          LTO_FLAG="--lto=thin"
+          if [ "$VERSION_MAJOR" = "6.12" ]; then
+            LTO_FLAG="--lto=none"
+          fi
+          
+          # Build with --config=fast and defconfig fragment
+          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast $LTO_FLAG --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist
           
           IMG_PATH="bazel-bin/common/kernel_aarch64/Image"
           BOOT_PATH=""
