@@ -594,7 +594,9 @@ runs:
         if [ -f "tools/bazel" ]; then
           echo "Using Bazel build system..."
           # Copy fragment into the kernel source tree for Bazel to reference
-          cp "$FRAGMENT_FILE" common/arch/arm64/configs/gki_custom.fragment
+          cp "$FRAGMENT_FILE" common/arch/arm64/configs/pratik_gki.fragment
+          # Register the fragment in BUILD.bazel so Bazel can resolve the target
+          echo 'exports_files(["arch/arm64/configs/pratik_gki.fragment"])' >> common/BUILD.bazel
           
           # Use LTO Thin + defconfig fragment (avoids modifying gki_defconfig)
           if [ "${{ inputs.optimize_level }}" = "O2" ]; then
