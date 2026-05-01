@@ -183,8 +183,7 @@ jobs:
         run: |
           # The hash is already passed directly through matrix items in the new design.
           # We just set it here for any legacy references if needed.
-          echo "ksu_hash=${{ steps.generate.outputs.ksu_hash }}" >> $GITHUB_OUTPUT            echo "Resolved KSU: $HASH"
-          fi
+          echo "ksu_hash=${{ steps.generate.outputs.ksu_hash }}" >> $GITHUB_OUTPUT
 
   build:
     needs: set-matrix

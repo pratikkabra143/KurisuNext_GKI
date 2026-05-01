@@ -639,8 +639,20 @@ runs:
           export SKIP_DEFCONFIG=0
           export BUILD_BOOT_IMG=1
           ../build/build.sh
-          IMG_PATH="../out/android12-5.10/dist/Image"
-          BOOT_PATH="../out/android12-5.10/dist/boot.img"
+          
+          # Dynamically locate outputs since older versions write to out/<branch>/dist/
+          IMG_PATH=$(find ../out -type f -name "Image" -path "*/dist/Image" | head -n1 || echo "")
+          BOOT_PATH=$(find ../out -type f -name "boot.img" -path "*/dist/boot.img" | head -n1 || echo "")
+          if [ -z "$IMG_PATH" ]; then
+            IMG_PATH=$(find ../out -type f -name "Image" | head -n1 || echo "")
+          fi
+          if [ -z "$BOOT_PATH" ]; then
+            BOOT_PATH=$(find ../out -type f -name "boot.img" | head -n1 || echo "")
+          fi
+          
+          # Remove leading '../' for relative path resolution below
+          IMG_PATH="${IMG_PATH#../}"
+          BOOT_PATH="${BOOT_PATH#../}"
           cd ..
         fi
         
