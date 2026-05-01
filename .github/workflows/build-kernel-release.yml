@@ -244,7 +244,37 @@ jobs:
           # 🎯 GKI Kernels with KernelSU & SUSFS
           
           > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
-          > **Build ID:** \`${{ github.run_id }}\`
+          > **Build ID:** \`${{ github.run_id }}\`  
+          > **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          
+          ---
+          
+          ## 📦 Build Configuration
+          
+          | Component | Version/Setting |
+          |-----------|----------------|
+          | **KernelSU Variant** | \`${{ inputs.ksu_type }}\` |
+          | **Optimization Level** | \`${{ inputs.optimize_level }}\` |
+          | **Clean Build** | \`${{ inputs.clean_build }}\` |
+          
+          ---
+          
+          ## ✨ Features & Capabilities
+          
+          | Feature | Enabled | Description |
+          |---------|---------|-------------|
+          | **SUSFS** | \`${{ inputs.feature_susfs }}\` | Advanced root hiding |
+          | **Baseband Guard (BBG)** | \`${{ inputs.feature_bbg }}\` | LSM-based baseband security |
+          | **BBRv3** | \`${{ inputs.feature_bbr }}\` | Improved TCP congestion control |
+          | **TTL Target** | \`${{ inputs.feature_ttl }}\` | Network packet manipulation |
+          | **IP Set & IPv6 NAT** | \`${{ inputs.feature_ip_set }}\` | Advanced firewall capabilities |
+          | **Unicode Fix** | \`${{ inputs.feature_unicode }}\` | Path traversal protection |
+          | **Droidspaces** | \`${{ inputs.feature_ds }}\` | Portable Linux containers |
+          | **NTSync** | \`${{ inputs.feature_ntsync }}\` | High-performance Windows NT sync primitives |
+          
+          ---
+          
+          **⚡ Built with ❤️ by the community**
           EOF
           
           gh release create "${{ env.NEW_TAG }}" \
@@ -252,7 +282,7 @@ jobs:
             --notes-file release_notes.md \
             --draft
             
-          for file in $(find ./downloaded-artifacts -name "*.zip"); do
+          for file in $(find ./downloaded-artifacts -name "*.zip" -o -name "*.img"); do
             echo "Uploading $file..."
             gh release upload "${{ env.NEW_TAG }}" "$file"
           done

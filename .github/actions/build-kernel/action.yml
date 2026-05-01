@@ -352,6 +352,27 @@ runs:
           fi
         fi
 
+    - name: Final Build Summary
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          echo "### 🎯 Kernel Build Summary"
+          echo "| Metric | Value |"
+          echo "|--------|-------|"
+          echo "| **Android Version** | ${{ env.ANDROID_VER }} |"
+          echo "| **Kernel Version** | ${{ env.VERSION_SUBLEVEL }} |"
+          echo "| **KSU Type** | ${{ inputs.ksu_type }} |"
+          echo "| **SUSFS** | ${{ inputs.feature_susfs }} |"
+          echo "| **BBG** | ${{ inputs.feature_bbg }} |"
+          echo "| **BBR** | ${{ inputs.feature_bbr }} |"
+          echo "| **TTL** | ${{ inputs.feature_ttl }} |"
+          echo "| **IP SET** | ${{ inputs.feature_ip_set }} |"
+          echo "| **Unicode Fix** | ${{ inputs.feature_unicode }} |"
+          echo "| **Droidspaces** | ${{ inputs.feature_ds }} |"
+          echo "| **NTSync** | ${{ inputs.feature_ntsync }} |"
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
