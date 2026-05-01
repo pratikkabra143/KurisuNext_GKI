@@ -261,16 +261,153 @@ jobs:
           
           ## ✨ Features & Capabilities
           
-          | Feature | Enabled | Description |
-          |---------|---------|-------------|
-          | **SUSFS** | \`${{ inputs.feature_susfs }}\` | Advanced root hiding |
-          | **Baseband Guard (BBG)** | \`${{ inputs.feature_bbg }}\` | LSM-based baseband security |
-          | **BBRv3** | \`${{ inputs.feature_bbr }}\` | Improved TCP congestion control |
-          | **TTL Target** | \`${{ inputs.feature_ttl }}\` | Network packet manipulation |
-          | **IP Set & IPv6 NAT** | \`${{ inputs.feature_ip_set }}\` | Advanced firewall capabilities |
-          | **Unicode Fix** | \`${{ inputs.feature_unicode }}\` | Path traversal protection |
-          | **Droidspaces** | \`${{ inputs.feature_ds }}\` | Portable Linux containers |
-          | **NTSync** | \`${{ inputs.feature_ntsync }}\` | High-performance Windows NT sync primitives |
+          ### 🔐 Root Management
+          EOF
+          if [ "${{ inputs.ksu_type }}" == "KSUN" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Next** - Next-generation kernel-level root solution
+          EOF
+          elif [ "${{ inputs.ksu_type }}" == "KSU" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU** - Kernel-level root solution
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **SUSFS** - Advanced hiding and security features
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          ### 🛡️ Security & Privacy
+          EOF
+          
+          if [ "${{ inputs.feature_bbg }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Baseband Guard (BBG)** - LSM-based baseband security
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **SUSFS Hide Features**:
+            - ✅ SUS_PATH - Hide suspicious paths
+            - ✅ SUS_MOUNT - Hide mount points
+            - ✅ SUS_KSTAT - Spoof kernel statistics
+            - ✅ SPOOF_UNAME - Kernel version spoofing
+            - ✅ SPOOF_CMDLINE - Boot parameters spoofing
+            - ✅ OPEN_REDIRECT - File access redirection
+            - ✅ SUS_MAP - Memory mapping protection
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_unicode }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Unicode Fix** - Prevent path traversal and detections using non-printable Unicode
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          
+          ### 🚀 Performance & Networking
+          EOF
+          
+          if [ "${{ inputs.feature_bbr }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **BBR** - Improved TCP congestion control
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ip_set }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **IP Set & IPv6 NAT** - Advanced firewall capabilities and IPv6 NAT
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ttl }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **TTL Target Support** - Network packet manipulation
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          - **Optimisation Patches** - Built with \`${{ inputs.optimize_level }}\`
+          
+          ### 🔧 System Features
+          EOF
+          
+          if [ "${{ inputs.feature_ds }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Droidspaces** - Support Portable Linux containers
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ntsync }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **NTSync** - High-performance synchronization primitives
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          
+          ---
+          
+          ## 📱 Manager Applications
+          
+          ### Official Manager
+          EOF
+          if [ "${{ inputs.ksu_type }}" == "KSUN" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Next Manager**  
+            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+          EOF
+          elif [ "${{ inputs.ksu_type }}" == "KSU" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Manager**  
+            → [GitHub Release](https://github.com/tiann/KernelSU/releases)
+          EOF
+          fi
+          cat << EOF >> release_notes.md
+          ### Community Managers
+          - **WildKSU Manager** (Recommended for additional features)  
+            → [GitHub Release](https://github.com/WildKernels/Wild_KSU/releases)
+          
+          ### Required Module
+          - **KSU SUSFS Module** (Required for SUSFS features)  
+            → [GitHub Release](https://github.com/sidex15/ksu_module_susfs/releases)
+          
+          ### Recommended Flasher
+          - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups)  
+            → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
+          
+          ---
+          
+          ## 📥 Installation Instructions
+          
+          ### Prerequisites
+          - Unlocked bootloader.
+          - Backup your current boot image.
+          - Have root access using Magisk / KernelSU / Apatch.
+          
+          ### Via Kernel Flasher
+          1. Download the correct AnyKernel3 ZIP for your device.
+          2. If you previously used another root method, clean it up first:
+              a. **Magisk**: perform a complete uninstall **after flashing the AnyKernel3 ZIP**.
+              b. **APatch**: remove /data/adb contents to avoid leftover root conflicts **after flashing**.
+          3. Flash the ZIP to the active slot using Kernel Flasher.
+          4. Install the corresponding Manager APK.
+          5. Open the app and grant permissions.
+          6. Reboot the device if you performed any cleanup.
+          
+          ---
+          
+          ## 🙏 Credits
+          
+          - **KernelSU & KernelSU-Next Teams** - Root solution
+          - **simonpunk** - SUSFS development
+          - **Google** - Android GKI source
+          - **Community Contributors** - Patches and networking fixes
           
           ---
           
