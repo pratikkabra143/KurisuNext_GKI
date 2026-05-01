@@ -138,6 +138,13 @@ runs:
             sed -i 's|$(src)|$(abspath $(src))|' Kbuild
             sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
           fi
+          
+          if [ "$KSU_VERSION" -lt 12884 ]; then
+            echo "NEED_HOOKS=true" >> $GITHUB_ENV
+          else
+            echo "NEED_HOOKS=false" >> $GITHUB_ENV
+          fi
+
           cd ../..
           
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
@@ -167,6 +174,9 @@ runs:
             sed -i 's|$(src)|$(abspath $(src))|' Kbuild
             sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
           fi
+          
+          echo "NEED_HOOKS=false" >> $GITHUB_ENV
+
           cd ../..
           
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
@@ -192,6 +202,17 @@ runs:
         SUSFS_COMMIT_SHA=$(git rev-parse HEAD || echo "unknown")
         echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> $GITHUB_ENV
         cd "$GKI_ROOT"
+
+        # Function to compare semantic versions
+        version_lte() {
+          [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$1" ]
+        }
+        
+        if version_lte "${susfs_version:1}" "1.5.12"; then
+          echo "NEED_HOOKS=true" >> $GITHUB_ENV
+        else
+          echo "NEED_HOOKS=false" >> $GITHUB_ENV
+        fi
         
         # Apply KSU integration patch based on version
         case "$susfs_version" in
@@ -695,8 +716,8 @@ runs:
           chmod +x avbtool.py
           
           # If secret is set, sign it
-          if [ -n "${{ env.BOOT_SIGN_KEY }}" ]; then
-            echo "${{ env.BOOT_SIGN_KEY }}" > rsa2048.pem
+          if [ -n "${BOOT_SIGN_KEY:-}" ]; then
+            printf "%s\n" "$BOOT_SIGN_KEY" > rsa2048.pem
             ./avbtool.py add_hash_footer \
               --image "$BOOT_PATH" \
               --partition_size 67108864 \
