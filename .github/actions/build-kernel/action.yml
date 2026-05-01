@@ -90,28 +90,77 @@ runs:
 
 
 
+    - name: Clean Up ABI Protected Exports
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Clean Up ABI Protected Exports"
+        cd "$GKI_ROOT"
+        rm -f common/android/abi_gki_protected_exports_* || true
+        sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl || true
+        echo "::endgroup::"
+
     - name: Inject KernelSU
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Add KernelSU / KernelSU-Next"
         cd "$GKI_ROOT/common"
         
         if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
           echo "Injecting KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          
+          cd KernelSU-Next/kernel
+          COMMITS_COUNT=$(/usr/bin/git rev-list --count HEAD)
+          if [ $COMMITS_COUNT -lt 2684 ]; then BASE_VERSION=10200; else BASE_VERSION=30000; fi
+          KSU_VERSION=$(expr $COMMITS_COUNT "+" $BASE_VERSION)
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          
+          if [ -f ksu.c ]; then
+            sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
+          fi
+          
+          if [[ "$KSU_VERSION" -gt 33095 ]] && [[ "$VERSION_MAJOR" == "6.12" ]]; then
+            sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/include/uapi|' Kbuild
+            sed -i 's|$(src)|$(abspath $(src))|' Kbuild
+            sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
+          fi
+          cd ../..
+          
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> arch/arm64/configs/gki_defconfig
+          
         else
           echo "Injecting KernelSU..."
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          
+          cd KernelSU/kernel
+          BASE_VERSION=30000
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
+          sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          
+          if [ -f ksu.c ]; then
+            sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
+          fi
+          
+          if [[ "$KSU_VERSION" -gt 32427 ]] && [[ "$VERSION_MAJOR" == "6.12" ]]; then
+            sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/include/uapi|' Kbuild
+            sed -i 's|$(src)|$(abspath $(src))|' Kbuild
+            sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
+          fi
+          cd ../..
+          
           echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
         fi
+        echo "::endgroup::"
 
     - name: Apply SUSFS Patches
       if: ${{ inputs.feature_susfs == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
+        echo "::group::Apply SUSFS patches"
         cd "$GKI_ROOT"
         
         # Copy SUSFS core files
@@ -121,28 +170,130 @@ runs:
         susfs_version=$(grep '#define SUSFS_VERSION' common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
         
+        # Apply KSU integration patch based on version
+        case "$susfs_version" in
+          "v1.5.8")
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KernelSU-Next
+              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" || true
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" || true
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" || true
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" || true
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              cd ../..
+            fi
+            ;;
+          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KernelSU-Next
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
+              done
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              cd ../..
+            fi
+            ;;
+          "v2.0.0"|"v2.1.0")
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KernelSU-Next
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
+              done
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch" || true
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              cd ../..
+            fi
+            ;;
+          *)
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KernelSU-Next
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
+              done
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              cd ../..
+            fi
+            ;;
+        esac
+        
         # Determine patch branch mapping
         SUSFS_BRANCH="gki-${ANDROID_VER}-${VERSION_MAJOR}"
         if [ "$ANDROID_VER" = "android12" ]; then SUSFS_BRANCH="gki-android12-5.10"; fi
         
-        # Apply core SUSFS patch
         cd common
+        
+        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+          fi
+        fi
+        
+        # Fake kernel patch to fix failures
+        fake_patched=0
+        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
+            echo "nr_subpages Line not found. Fake Patching!"
+            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
+            fake_patched=1
+            TASK_MMU_VARS_ADDED=1
+          else
+            TASK_MMU_VARS_ADDED=0
+          fi
+          
+          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+            echo "#include <linux/dma-buf.h> Line not found. Adding missing header"
+            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+          fi
+        fi
+        
+        if [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "6.1" ]; then
+          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
+            echo "vma_pages Line not found. Fake Patching!"
+            fake_patched=1
+          fi
+          
+          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+            echo "#include <linux/dma-buf.h> Line not found. Adding missing header"
+            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+          fi
+        fi
+        
+        # Apply core SUSFS patch
         patch -p1 --forward < "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" || true
         
-        # Apply KSU integration patch
-        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          cd KernelSU-Next
-          patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-          # Bridge fixes
-          for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
-            patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
-          done
-          patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
-          cd ..
-        else
-          cd KernelSU
-          patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-          cd ..
+        # Revert Fake kernel patch
+        if [ "$fake_patched" = 1 ]; then
+          if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+            if [ "${TASK_MMU_VARS_ADDED:-0}" = "1" ]; then
+              echo "Reverting nr_subpages Fake Patching!"
+              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
+            fi
+          fi
+          if [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "6.1" ]; then
+            if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
+              echo "Reverting vma_pages Fake Patching!"
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+          fi
         fi
         
         # Add configs
