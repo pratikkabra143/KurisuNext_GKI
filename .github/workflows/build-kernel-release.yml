@@ -1,0 +1,258 @@
+name: 🛠️ Build GKI Kernels
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Which Android-Kernel combination to build?'
+        required: true
+        type: choice
+        options:
+          - all
+          - a12-5.10
+          - a13-5.10
+          - a13-5.15
+          - a14-5.15
+          - a14-6.1
+          - a15-6.6
+          - a16-6.12
+        default: 'a15-6.6'
+      ksu_type:
+        description: 'KernelSU Variant'
+        required: true
+        type: choice
+        options:
+          - KSUN
+          - KSU
+        default: 'KSUN'
+      ksu_branch_or_hash:
+        description: 'KSU branch or commit hash (empty = dev/main)'
+        required: false
+        type: string
+        default: ''
+      susfs_branch_or_hash:
+        description: 'SUSFS branch or commit hash (empty = auto-detect)'
+        required: false
+        type: string
+        default: ''
+      optimize_level:
+        description: 'Compiler optimization level'
+        required: true
+        type: choice
+        options:
+          - O2
+          - O3
+        default: 'O2'
+      clean_build:
+        description: 'Force clean build (bypass ccache)'
+        required: true
+        type: boolean
+        default: false
+      
+      # 🛡️ Feature Flags
+      feature_susfs:
+        description: 'Enable SUSFS (Root Hiding)'
+        required: true
+        type: boolean
+        default: true
+      feature_bbg:
+        description: 'Enable Baseband Guard (BBG)'
+        required: true
+        type: boolean
+        default: true
+      feature_bbr:
+        description: 'Enable BBR Congestion Control'
+        required: true
+        type: boolean
+        default: true
+      feature_ttl:
+        description: 'Enable TTL Target'
+        required: true
+        type: boolean
+        default: true
+      feature_ip_set:
+        description: 'Enable IP_SET & IPv6 NAT'
+        required: true
+        type: boolean
+        default: true
+      feature_unicode:
+        description: 'Enable Unicode Bypass Fix'
+        required: true
+        type: boolean
+        default: true
+      feature_ds:
+        description: 'Enable Droidspaces'
+        required: true
+        type: boolean
+        default: true
+      feature_ntsync:
+        description: 'Enable NTSync'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  set-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.generate.outputs.matrix }}
+      has_builds: ${{ steps.generate.outputs.has_builds }}
+      ksu_resolved_hash: ${{ steps.resolve-hashes.outputs.ksu_hash }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate Matrix
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          # Initialize empty JSON array
+          JSON_ARRAY="[]"
+          
+          # Determine which files to process
+          TARGET="${{ inputs.build_target }}"
+          if [ "$TARGET" = "all" ]; then
+            FILES=(.github/kernel-config/*.json)
+          else
+            FILES=(".github/kernel-config/${TARGET}.json")
+          fi
+          
+          for file in "${FILES[@]}"; do
+            if [ -f "$file" ]; then
+              echo "Processing $file"
+              # Extract array and merge
+              JSON_ARRAY=$(jq -s '.[0] + .[1].include' <<< "$JSON_ARRAY $(cat $file)")
+            fi
+          done
+          
+          # Check if empty
+          COUNT=$(echo "$JSON_ARRAY" | jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "has_builds=false" >> $GITHUB_OUTPUT
+            echo "::error::No kernel configurations found for target $TARGET"
+            exit 1
+          fi
+          
+          # Output matrix
+          echo "has_builds=true" >> $GITHUB_OUTPUT
+          MATRIX_JSON=$(jq -c '.' <<< "$JSON_ARRAY")
+          echo "matrix={\"include\":$MATRIX_JSON}" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $MATRIX_JSON"
+
+      - name: Resolve KSU Hash
+        id: resolve-hashes
+        shell: bash
+        run: |
+          # Fetch the exact commit hash for reproducible builds
+          KSU_TYPE="${{ inputs.ksu_type }}"
+          INPUT_HASH="${{ inputs.ksu_branch_or_hash }}"
+          
+          if [ "$KSU_TYPE" = "KSUN" ]; then
+            REPO="pratikkabra143/KernelSU-Next"
+            DEFAULT_BRANCH="dev"
+          else
+            REPO="tiann/KernelSU"
+            DEFAULT_BRANCH="main"
+          fi
+          
+          REF="${INPUT_HASH:-$DEFAULT_BRANCH}"
+          
+          echo "Resolving KSU hash for $REPO @ $REF"
+          # Get commit hash via GitHub API
+          HASH=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$REPO/commits/$REF" | jq -r '.sha')
+            
+          if [ "$HASH" = "null" ] || [ -z "$HASH" ]; then
+            echo "::warning::Failed to resolve exact hash, will use ref: $REF"
+            echo "ksu_hash=$REF" >> $GITHUB_OUTPUT
+          else
+            echo "ksu_hash=$HASH" >> $GITHUB_OUTPUT
+            echo "Resolved KSU: $HASH"
+          fi
+
+  build:
+    needs: set-matrix
+    if: ${{ needs.set-matrix.outputs.has_builds == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.set-matrix.outputs.build_matrix) }}
+    
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+          
+      - uses: actions/checkout@v4
+      
+      - name: Set up Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc curl git python3 libssl-dev zip gcc-aarch64-linux-gnu ccache
+      
+      - name: Build Kernel
+        env:
+          BOOT_SIGN_KEY: ${{ secrets.BOOT_SIGN_KEY }}
+        uses: ./.github/actions/build-kernel
+        with:
+          kernel_version: ${{ matrix.kernel_version }}
+          ksu_type: ${{ inputs.ksu_type }}
+          ksu_hash: ${{ needs.set-matrix.outputs.ksu_resolved_hash }}
+          susfs_hash: ${{ inputs.susfs_branch_or_hash }}
+          optimize_level: ${{ inputs.optimize_level }}
+          clean_build: ${{ inputs.clean_build }}
+          feature_susfs: ${{ inputs.feature_susfs }}
+          feature_bbg: ${{ inputs.feature_bbg }}
+          feature_bbr: ${{ inputs.feature_bbr }}
+          feature_ttl: ${{ inputs.feature_ttl }}
+          feature_ip_set: ${{ inputs.feature_ip_set }}
+          feature_unicode: ${{ inputs.feature_unicode }}
+          feature_ds: ${{ inputs.feature_ds }}
+          feature_ntsync: ${{ inputs.feature_ntsync }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
+      
+      - name: Prepare Release Name
+        run: |
+          DATE=$(date -u '+%Y%m%d_%H%M%S')
+          echo "NEW_TAG=v$DATE" >> $GITHUB_ENV
+          echo "RELEASE_NAME=GKI Kernel Release ($DATE)" >> $GITHUB_ENV
+      
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat << EOF > release_notes.md
+          # 🎯 GKI Kernels with KernelSU & SUSFS
+          
+          > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
+          > **Build ID:** \`${{ github.run_id }}\`
+          EOF
+          
+          gh release create "${{ env.NEW_TAG }}" \
+            --title "${{ env.RELEASE_NAME }}" \
+            --notes-file release_notes.md \
+            --draft
+            
+          for file in $(find ./downloaded-artifacts -name "*.zip"); do
+            echo "Uploading $file..."
+            gh release upload "${{ env.NEW_TAG }}" "$file"
+          done

@@ -1,0 +1,359 @@
+name: 'Build GKI Kernel'
+description: 'Downloads, patches, builds, and packages a GKI kernel'
+
+inputs:
+  kernel_version:
+    required: true
+  ksu_type:
+    required: true
+  ksu_hash:
+    required: true
+  susfs_hash:
+    required: true
+  optimize_level:
+    required: true
+  clean_build:
+    required: true
+  feature_susfs:
+    required: true
+  feature_bbg:
+    required: true
+  feature_bbr:
+    required: true
+  feature_ttl:
+    required: true
+  feature_ip_set:
+    required: true
+  feature_unicode:
+    required: true
+  feature_ds:
+    required: true
+  feature_ntsync:
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Parse Kernel Version
+      id: parse
+      shell: bash
+      run: |
+        set -euo pipefail
+        KVER="${{ inputs.kernel_version }}"
+        IFS='-' read -ra PARTS <<< "$KVER"
+        
+        VERSION_SUBLEVEL="${PARTS[0]}"
+        IFS='.' read -ra VPARTS <<< "$VERSION_SUBLEVEL"
+        VERSION_MAJOR="${VPARTS[0]}.${VPARTS[1]}"
+        
+        ANDROID_VER="${PARTS[1]}"
+        
+        if [ "${PARTS[2]}" = "lts" ]; then
+          BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}"
+        elif [ "${PARTS[2]}" = "release" ]; then
+          BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-release"
+        else
+          BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${PARTS[2]}-${PARTS[3]}"
+        fi
+        
+        echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+        echo "VERSION_MAJOR=$VERSION_MAJOR" >> $GITHUB_ENV
+        echo "ANDROID_VER=$ANDROID_VER" >> $GITHUB_ENV
+        echo "VERSION_SUBLEVEL=$VERSION_SUBLEVEL" >> $GITHUB_ENV
+        
+        echo "✅ Detected Branch: $BRANCH"
+
+    - name: Set Paths
+      shell: bash
+      run: |
+        WORKSPACE="${GITHUB_WORKSPACE}"
+        echo "GKI_ROOT=$WORKSPACE/gki_workspace" >> $GITHUB_ENV
+        echo "AK3_DIR=$WORKSPACE/AnyKernel3" >> $GITHUB_ENV
+        echo "SUSFS_DIR=$WORKSPACE/susfs4ksu" >> $GITHUB_ENV
+        echo "PATCHES_DIR=$WORKSPACE/kernel_patches" >> $GITHUB_ENV
+
+    - name: Clone Dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        git clone https://github.com/TheWildJames/AnyKernel3.git -b gki-2.0 "$AK3_DIR"
+        git clone https://github.com/TheWildJames/kernel_patches.git "$PATCHES_DIR"
+        
+        if [ "${{ inputs.feature_susfs }}" = "true" ]; then
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b master "$SUSFS_DIR"
+          if [ -n "${{ inputs.susfs_hash }}" ]; then
+            cd "$SUSFS_DIR"
+            git checkout "${{ inputs.susfs_hash }}"
+            cd -
+          fi
+        fi
+
+    - name: Sync GKI Kernel Source
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$GKI_ROOT"
+        cd "$GKI_ROOT"
+        
+        repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1
+        repo sync -c -j$(nproc) --no-clone-bundle --no-tags --optimized-fetch
+        
+        # Verify sync
+        if [ ! -d "common" ]; then
+          echo "::error::Kernel source sync failed!"
+          exit 1
+        fi
+        echo "✅ Kernel source synced."
+
+    - name: Inject KernelSU
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GKI_ROOT/common"
+        
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          echo "Injecting KernelSU-Next..."
+          curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_KPROBES_HOOK=n" >> arch/arm64/configs/gki_defconfig
+        else
+          echo "Injecting KernelSU..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+        fi
+
+    - name: Apply SUSFS Patches
+      if: ${{ inputs.feature_susfs == 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GKI_ROOT"
+        
+        # Copy SUSFS core files
+        cp -r "$SUSFS_DIR/kernel_patches/fs/"* common/fs/
+        cp -r "$SUSFS_DIR/kernel_patches/include/linux/"* common/include/linux/
+        
+        susfs_version=$(grep '#define SUSFS_VERSION' common/include/linux/susfs.h | awk -F'"' '{print $2}')
+        echo "SUSVER=$susfs_version" >> $GITHUB_ENV
+        
+        # Determine patch branch mapping
+        SUSFS_BRANCH="gki-${ANDROID_VER}-${VERSION_MAJOR}"
+        if [ "$ANDROID_VER" = "android12" ]; then SUSFS_BRANCH="gki-android12-5.10"; fi
+        
+        # Apply core SUSFS patch
+        cd common
+        patch -p1 --forward < "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" || true
+        
+        # Apply KSU integration patch
+        if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          cd KernelSU-Next
+          patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+          # Bridge fixes
+          for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
+            patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
+          done
+          patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
+          cd ..
+        else
+          cd KernelSU
+          patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+          cd ..
+        fi
+        
+        # Add configs
+        cat >> arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_KSU_SUSFS_SUS_MAP=y
+        CONFIG_KSU_SUSFS_SUS_SU=n
+        EOF
+
+    - name: Apply Features
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GKI_ROOT/common"
+        
+        if [ "${{ inputs.feature_bbg }}" = "true" ]; then
+          wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s main || true
+          echo "CONFIG_BBG=y" >> arch/arm64/configs/gki_defconfig
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+        fi
+        
+        if [ "${{ inputs.feature_bbr }}" = "true" ]; then
+          cat >> arch/arm64/configs/gki_defconfig <<EOF
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_NET_SCH_FQ_CODEL=y
+          EOF
+        fi
+        
+        if [ "${{ inputs.feature_ttl }}" = "true" ]; then
+          cat >> arch/arm64/configs/gki_defconfig <<EOF
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          EOF
+        fi
+        
+        if [ "${{ inputs.feature_ip_set }}" = "true" ]; then
+          cat >> arch/arm64/configs/gki_defconfig <<EOF
+          CONFIG_IP_SET=y
+          CONFIG_IP_SET_MAX=65534
+          CONFIG_IP_SET_BITMAP_IP=y
+          CONFIG_IP_SET_BITMAP_IPMAC=y
+          CONFIG_IP_SET_BITMAP_PORT=y
+          CONFIG_IP_SET_HASH_IP=y
+          CONFIG_IP_SET_HASH_IPMARK=y
+          CONFIG_IP_SET_HASH_IPPORT=y
+          CONFIG_IP_SET_HASH_IPPORTIP=y
+          CONFIG_IP_SET_HASH_IPPORTNET=y
+          CONFIG_IP_SET_HASH_IPMAC=y
+          CONFIG_IP_SET_HASH_MAC=y
+          CONFIG_IP_SET_HASH_NETPORTNET=y
+          CONFIG_IP_SET_HASH_NET=y
+          CONFIG_IP_SET_HASH_NETNET=y
+          CONFIG_IP_SET_HASH_NETPORT=y
+          CONFIG_IP_SET_HASH_NETIFACE=y
+          CONFIG_IP_SET_LIST_SET=y
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+          CONFIG_NETFILTER_XT_SET=y
+          CONFIG_IP6_NF_NAT=y
+          CONFIG_IP6_NF_TARGET_MASQUERADE=y
+          EOF
+          patch -p1 -F 3 < "$PATCHES_DIR/common/IPv6_NAT_FIX.patch" || true
+        fi
+        
+        if [ "${{ inputs.feature_ds }}" = "true" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch" || true
+          cat >> arch/arm64/configs/gki_defconfig <<EOF
+          CONFIG_SYSVIPC=y
+          CONFIG_DEVTMPFS=y
+          CONFIG_PID_NS=y
+          CONFIG_POSIX_MQUEUE=y
+          CONFIG_NETFILTER_XT_TARGET_REJECT=y
+          CONFIG_NETFILTER_XT_TARGET_LOG=y
+          CONFIG_NETFILTER_XT_MATCH_RECENT=y
+          EOF
+        fi
+        
+        if [ "${{ inputs.feature_ntsync }}" = "true" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/common/ntsync/ntsync_compat_${ANDROID_VER}-${VERSION_MAJOR}.patch" || true
+          patch -p1 --forward < "$PATCHES_DIR/common/ntsync/ntsync_base.patch" || true
+          echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/gki_defconfig
+        fi
+
+        if [ "${{ inputs.feature_unicode }}" = "true" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/common/unicode_bypass_fix_6.1+.patch" || true
+        fi
+
+    - name: Compile Kernel
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$GKI_ROOT"
+        
+        # Localversion branding
+        LOCALVERSION="-pratikkabra143"
+        echo "LOCALVERSION=$LOCALVERSION" >> $GITHUB_ENV
+        
+        # Build System Selector
+        if [ -f "tools/bazel" ]; then
+          echo "Using Bazel build system..."
+          # Update config via bazel trick or let it merge natively
+          sed -i "\$a\LOCALVERSION=\"$LOCALVERSION\"" common/arch/arm64/configs/gki_defconfig
+          
+          # Use LTO Thin
+          if [ "${{ inputs.optimize_level }}" = "O2" ]; then
+            tools/bazel run //common:kernel_aarch64_dist -- --dist_dir=out/dist --lto=thin
+          else
+            # O3 if possible, but bazel mostly handles its own flags.
+            tools/bazel run //common:kernel_aarch64_dist -- --dist_dir=out/dist --lto=thin
+          fi
+          IMG_PATH="out/dist/Image"
+          BOOT_PATH="out/dist/boot.img"
+          
+        else
+          echo "Using build.sh system..."
+          cd common
+          # ... Legacy build.sh requires specific environment setup
+          BUILD_CONFIG=common/build.config.gki.aarch64
+          export LTO=thin
+          export SKIP_MRPROPER=1
+          export SKIP_DEFCONFIG=0
+          export BUILD_BOOT_IMG=1
+          ../build/build.sh
+          IMG_PATH="../out/android12-5.10/dist/Image"
+          BOOT_PATH="../out/android12-5.10/dist/boot.img"
+          cd ..
+        fi
+        
+        if [ ! -f "$IMG_PATH" ]; then
+          echo "::error::Build Failed! Image not found."
+          exit 1
+        fi
+        
+        echo "IMG_PATH=$GKI_ROOT/$IMG_PATH" >> $GITHUB_ENV
+        echo "BOOT_PATH=$GKI_ROOT/$BOOT_PATH" >> $GITHUB_ENV
+
+    - name: Package AnyKernel3 & Sign Boot
+      shell: bash
+      run: |
+        set -euo pipefail
+        
+        # AnyKernel3 Setup
+        cp "$IMG_PATH" "$AK3_DIR/"
+        cd "$AK3_DIR"
+        sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh
+        
+        ZIP_NAME="AnyKernel3_${{ env.VERSION_SUBLEVEL }}_${{ inputs.ksu_type }}.zip"
+        zip -r9 "$ZIP_NAME" * -x "*.git*" "README.md"
+        
+        # Artifacts dir
+        mkdir -p "$WORKSPACE/artifacts"
+        mv "$ZIP_NAME" "$WORKSPACE/artifacts/"
+        
+        # Boot Image Signing
+        if [ -f "$BOOT_PATH" ]; then
+          echo "Signing boot image..."
+          cd "$WORKSPACE"
+          wget -q https://android.googlesource.com/platform/external/avb/+archive/refs/heads/master.tar.gz -O avb.tar.gz
+          tar -xzf avb.tar.gz avbtool.py
+          chmod +x avbtool.py
+          
+          # If secret is set, sign it
+          if [ -n "${{ env.BOOT_SIGN_KEY }}" ]; then
+            echo "${{ env.BOOT_SIGN_KEY }}" > rsa2048.pem
+            ./avbtool.py add_hash_footer \
+              --image "$BOOT_PATH" \
+              --partition_size 67108864 \
+              --partition_name boot \
+              --key rsa2048.pem \
+              --algorithm SHA256_RSA2048
+              
+            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_${{ env.VERSION_SUBLEVEL }}_signed.img"
+          else
+            echo "::warning::BOOT_SIGN_KEY not set. Cannot sign boot.img."
+            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_${{ env.VERSION_SUBLEVEL }}_unsigned.img"
+          fi
+        fi
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-${{ env.VERSION_SUBLEVEL }}
+        path: ${{ github.workspace }}/artifacts/*
