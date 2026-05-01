@@ -59,7 +59,9 @@ runs:
         elif [ "${PARTS[2]}" = "release" ]; then
           BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-release"
         else
-          BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${PARTS[2]}-${PARTS[3]}"
+          # Join all remaining parts to handle suffixes like 2025-05-exp
+          SUFFIX=$(IFS='-'; echo "${PARTS[*]:2}")
+          BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${SUFFIX}"
         fi
         
         echo "BRANCH=$BRANCH" >> $GITHUB_ENV
@@ -73,6 +75,7 @@ runs:
       shell: bash
       run: |
         WORKSPACE="${GITHUB_WORKSPACE}"
+        echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
         echo "GKI_ROOT=$WORKSPACE/gki_workspace" >> $GITHUB_ENV
         echo "AK3_DIR=$WORKSPACE/AnyKernel3" >> $GITHUB_ENV
         echo "SUSFS_DIR=$WORKSPACE/susfs4ksu" >> $GITHUB_ENV
@@ -138,12 +141,6 @@ runs:
             sed -i 's|$(src)|$(abspath $(src))|' Kbuild
             sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
           fi
-          
-          if [ "$KSU_VERSION" -lt 12884 ]; then
-            echo "NEED_HOOKS=true" >> $GITHUB_ENV
-          else
-            echo "NEED_HOOKS=false" >> $GITHUB_ENV
-          fi
 
           cd ../..
           
@@ -174,8 +171,6 @@ runs:
             sed -i 's|$(src)|$(abspath $(src))|' Kbuild
             sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
           fi
-          
-          echo "NEED_HOOKS=false" >> $GITHUB_ENV
 
           cd ../..
           
@@ -203,49 +198,8 @@ runs:
         echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> $GITHUB_ENV
         cd "$GKI_ROOT"
 
-        # Function to compare semantic versions
-        version_lte() {
-          [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$1" ]
-        }
-        
-        if version_lte "${susfs_version:1}" "1.5.12"; then
-          echo "NEED_HOOKS=true" >> $GITHUB_ENV
-        else
-          echo "NEED_HOOKS=false" >> $GITHUB_ENV
-        fi
-        
         # Apply KSU integration patch based on version
         case "$susfs_version" in
-          "v1.5.8")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd common/KernelSU-Next
-              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch" || true
-              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch" || true
-              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch" || true
-              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch" || true
-              cd ../..
-            else
-              cd common/KernelSU
-              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              cd ../..
-            fi
-            ;;
-          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd common/KernelSU-Next
-              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -printf "%f\n" | cut -d'.' -f1); do
-                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch" || true
-              done
-              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch" || true
-              cd ../..
-            else
-              cd common/KernelSU
-              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              cd ../..
-            fi
-            ;;
           "v2.0.0"|"v2.1.0")
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               cd common/KernelSU-Next
@@ -342,35 +296,24 @@ runs:
         
         # Add configs
         cat >> arch/arm64/configs/gki_defconfig <<EOF
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_KSTAT=y
-        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_KSU_SUSFS_SUS_MAP=y
-        CONFIG_KSU_SUSFS_SUS_SU=n
-        EOF
-
-    - name: Apply KSU Hooks
-      shell: bash
-      if: ${{ env.NEED_HOOKS == 'true' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Apply KSU hooks"
-        cd "$GKI_ROOT/common"
-        patch -p1 < "$PATCHES_DIR/next/scope_min_manual_hooks_v1.4.patch" || true
-        echo "✅ KSU hooks applied"
-        echo "::endgroup::"
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
+CONFIG_KSU_SUSFS_SUS_SU=n
+EOF
 
     - name: Apply Other Patches
       shell: bash
@@ -459,7 +402,7 @@ runs:
         set -euo pipefail
         echo "::group::Add BBG LSM"
         cd "$GKI_ROOT/common"
-        wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s main || true
+        curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s main || true
         echo "CONFIG_BBG=y" >> arch/arm64/configs/gki_defconfig
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
         echo "✅ BBG LSM added"
@@ -658,6 +601,8 @@ runs:
         else
           echo "Using build.sh system..."
           cd common
+          # Write LOCALVERSION for legacy build system
+          echo "CONFIG_LOCALVERSION=\"$LOCALVERSION\"" >> arch/arm64/configs/gki_defconfig
           # ... Legacy build.sh requires specific environment setup
           BUILD_CONFIG=common/build.config.gki.aarch64
           export LTO=thin

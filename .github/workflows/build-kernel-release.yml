@@ -31,8 +31,16 @@ on:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
         default: '674f72b6f683e837d7f557704cabe00a83eeb0b4'
+      android13-5_10_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android13-5.10'
+        type: string
+        default: '674f72b6f683e837d7f557704cabe00a83eeb0b4'
       android13-5_15_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android13-5.15'
+        type: string
+        default: 'eaa5d299dd85a4230f936b94dc5dd8303f27130a'
+      android14-5_15_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android14-5.15'
         type: string
         default: 'eaa5d299dd85a4230f936b94dc5dd8303f27130a'
       android14-6_1_susfs_branch_or_commit:
@@ -273,7 +281,9 @@ jobs:
         if: ${{ inputs.clean_build == false }}
         uses: ./.github/actions/cache/restore
         with:
-          key_prefix: "gki-${{ matrix.kernel_version }}"
+          cache_path: "${{ github.workspace }}/.ccache"
+          cache_key: "gki-${{ matrix.kernel_version }}"
+          cache_bucket: "general-cache"
           
       - name: Parse Branch and Set ENV
         run: |
@@ -288,7 +298,9 @@ jobs:
           elif [ "${PARTS[2]}" = "release" ]; then
             BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-release"
           else
-            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${PARTS[2]}-${PARTS[3]}"
+            # Join all remaining parts to handle suffixes like 2025-05-exp
+            SUFFIX=$(IFS='-'; echo "${PARTS[*]:2}")
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${SUFFIX}"
           fi
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           
@@ -304,19 +316,38 @@ jobs:
         shell: bash
         run: |
           KVER="${{ matrix.kernel_version }}"
-          if [[ "$KVER" == *"a12-5.10"* ]]; then
-            echo "hash=${{ inputs.android12-5_10_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
-          elif [[ "$KVER" == *"a13-5.15"* ]]; then
-            echo "hash=${{ inputs.android13-5_15_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
-          elif [[ "$KVER" == *"a14-6.1"* ]]; then
-            echo "hash=${{ inputs.android14-6_1_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
-          elif [[ "$KVER" == *"a15-6.6"* ]]; then
-            echo "hash=${{ inputs.android15-6_6_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
-          elif [[ "$KVER" == *"a16-6.12"* ]]; then
-            echo "hash=${{ inputs.android16-6_12_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
-          else
-            echo "hash=" >> $GITHUB_OUTPUT
-          fi
+          # Parse android version and kernel major from kernel_version
+          IFS='-' read -ra KPARTS <<< "$KVER"
+          K_MAJOR=$(echo "${KPARTS[0]}" | cut -d'.' -f1-2)
+          K_ANDROID="${KPARTS[1]}"
+          
+          case "${K_ANDROID}-${K_MAJOR}" in
+            "android12-5.10")
+              echo "hash=${{ inputs.android12-5_10_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android13-5.10")
+              echo "hash=${{ inputs.android13-5_10_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android13-5.15")
+              echo "hash=${{ inputs.android13-5_15_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android14-5.15")
+              echo "hash=${{ inputs.android14-5_15_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android14-6.1")
+              echo "hash=${{ inputs.android14-6_1_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android15-6.6")
+              echo "hash=${{ inputs.android15-6_6_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android16-6.12")
+              echo "hash=${{ inputs.android16-6_12_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "::warning::Unknown kernel target ${K_ANDROID}-${K_MAJOR}, using empty SUSFS hash"
+              echo "hash=" >> $GITHUB_OUTPUT
+              ;;
+          esac
           
       - name: Build Kernel
         env:
@@ -344,7 +375,10 @@ jobs:
         if: always() && inputs.clean_build == false
         uses: ./.github/actions/cache/save
         with:
-          key_prefix: "gki-${{ matrix.kernel_version }}"
+          cache_path: "${{ github.workspace }}/.ccache"
+          cache_key: "gki-${{ matrix.kernel_version }}"
+          cache_bucket: "general-cache"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     needs: build
@@ -368,6 +402,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Extract KSU type from ksu_options JSON for release notes
+          KSU_TYPE=$(echo '${{ inputs.ksu_options }}' | jq -r '.[0].type // empty' | tr '[:lower:]' '[:upper:]')
+          if [ -z "$KSU_TYPE" ]; then KSU_TYPE="UNKNOWN"; fi
+          
           cat << EOF > release_notes.md
           # 🎯 GKI Kernels with KernelSU & SUSFS
           
@@ -381,7 +419,7 @@ jobs:
           
           | Component | Version/Setting |
           |-----------|----------------|
-          | **KernelSU Variant** | \`${{ inputs.ksu_type }}\` |
+          | **KernelSU Variant** | \`${KSU_TYPE}\` |
           | **Optimization Level** | \`${{ inputs.optimize_level }}\` |
           | **Clean Build** | \`${{ inputs.clean_build }}\` |
           
@@ -391,11 +429,11 @@ jobs:
           
           ### 🔐 Root Management
           EOF
-          if [ "${{ inputs.ksu_type }}" == "KSUN" ]; then
+          if [ "$KSU_TYPE" == "KSUN" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Next** - Next-generation kernel-level root solution
           EOF
-          elif [ "${{ inputs.ksu_type }}" == "KSU" ]; then
+          elif [ "$KSU_TYPE" == "KSU" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU** - Kernel-level root solution
           EOF
@@ -496,12 +534,12 @@ jobs:
           
           ### Official Manager
           EOF
-          if [ "${{ inputs.ksu_type }}" == "KSUN" ]; then
+          if [ "$KSU_TYPE" == "KSUN" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Next Manager**  
             → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
           EOF
-          elif [ "${{ inputs.ksu_type }}" == "KSU" ]; then
+          elif [ "$KSU_TYPE" == "KSU" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Manager**  
             → [GitHub Release](https://github.com/tiann/KernelSU/releases)
