@@ -3,6 +3,11 @@ name: 🛠️ Build GKI Kernels
 on:
   workflow_dispatch:
     inputs:
+      make_release:
+        description: 'Do you want to create a release?'
+        required: true
+        type: boolean
+        default: false
       build_target:
         description: 'Which Android-Kernel combination to build?'
         required: true
@@ -17,19 +22,11 @@ on:
           - a15-6.6
           - a16-6.12
         default: 'a15-6.6'
-      ksu_type:
-        description: 'KernelSU Variant'
+      ksu_options:
+        description: 'Enter KernelSU build json'
         required: true
-        type: choice
-        options:
-          - KSUN
-          - KSU
-        default: 'KSUN'
-      ksu_branch_or_hash:
-        description: 'KSU branch or commit hash (empty = dev/main)'
-        required: false
         type: string
-        default: ''
+        default: '[{"type":"ksun","hash":"2210069c8a6960a504620543609e1149bf74de11"}]'
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
@@ -63,6 +60,20 @@ on:
         required: true
         type: boolean
         default: false
+      debug:
+        description: 'Enable debug mode: dumping debug related artifacts and show some debug logs'
+        required: false
+        type: boolean
+        default: false
+      mirror_toolchains:
+        description: 'Do you want to sync toolchains before build? [99% runs not required]'
+        required: false
+        type: boolean
+        default: false
+      build_timestamp:
+        description: 'Custom kernel build timestamp for uname -a (e.g. "Tue Feb 10 10:01:02 UTC 2026"). Leave empty for current time.'
+        type: string
+        default: ''
       
       # 🛡️ Feature Flags
       feature_susfs:
@@ -122,6 +133,12 @@ jobs:
         run: |
           set -euo pipefail
           
+          ksu_options_raw='${{ inputs.ksu_options }}'
+          if ! ksu_options_normalized=$(echo "$ksu_options_raw" | jq -c 'map(if .type then .type |= ascii_upcase | if .hash == null then if .type == "KSUN" then .hash = "dev" elif .type == "KSU" then .hash = "main" else .hash end else . end else error("No type found") end)' 2>&1); then
+            echo "::error::ksu_options validation failed: $ksu_options_normalized"
+            exit 1
+          fi
+          
           # Initialize empty JSON array
           JSON_ARRAY="[]"
           
@@ -149,41 +166,24 @@ jobs:
             exit 1
           fi
           
+          merged_matrix=$(jq -n --argjson devices "$JSON_ARRAY" --argjson ksu_list "$ksu_options_normalized" '[ $devices[] as $dev | $ksu_list[] as $ksu | ($dev + {ksu_type: $ksu.type, ksu_hash: $ksu.hash}) ]')
+          
           # Output matrix
           echo "has_builds=true" >> $GITHUB_OUTPUT
-          MATRIX_JSON=$(jq -c '.' <<< "$JSON_ARRAY")
+          MATRIX_JSON=$(jq -c '.' <<< "$merged_matrix")
           echo "matrix={\"include\":$MATRIX_JSON}" >> $GITHUB_OUTPUT
           echo "Generated matrix: $MATRIX_JSON"
+          
+          # Set fallback KSU hash based on first array element for backwards compatibility mapping
+          echo "ksu_hash=$(echo "$ksu_options_normalized" | jq -r '.[0].hash')" >> $GITHUB_OUTPUT
 
       - name: Resolve KSU Hash
         id: resolve-hashes
         shell: bash
         run: |
-          # Fetch the exact commit hash for reproducible builds
-          KSU_TYPE="${{ inputs.ksu_type }}"
-          INPUT_HASH="${{ inputs.ksu_branch_or_hash }}"
-          
-          if [ "$KSU_TYPE" = "KSUN" ]; then
-            REPO="pratikkabra143/KernelSU-Next"
-            DEFAULT_BRANCH="dev"
-          else
-            REPO="tiann/KernelSU"
-            DEFAULT_BRANCH="main"
-          fi
-          
-          REF="${INPUT_HASH:-$DEFAULT_BRANCH}"
-          
-          echo "Resolving KSU hash for $REPO @ $REF"
-          # Get commit hash via GitHub API
-          HASH=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/$REPO/commits/$REF" | jq -r '.sha')
-            
-          if [ "$HASH" = "null" ] || [ -z "$HASH" ]; then
-            echo "::warning::Failed to resolve exact hash, will use ref: $REF"
-            echo "ksu_hash=$REF" >> $GITHUB_OUTPUT
-          else
-            echo "ksu_hash=$HASH" >> $GITHUB_OUTPUT
-            echo "Resolved KSU: $HASH"
+          # The hash is already passed directly through matrix items in the new design.
+          # We just set it here for any legacy references if needed.
+          echo "ksu_hash=${{ steps.generate.outputs.ksu_hash }}" >> $GITHUB_OUTPUT            echo "Resolved KSU: $HASH"
           fi
 
   build:
@@ -325,11 +325,13 @@ jobs:
         uses: ./.github/actions/build-kernel
         with:
           kernel_version: ${{ matrix.kernel_version }}
-          ksu_type: ${{ inputs.ksu_type }}
-          ksu_hash: ${{ needs.set-matrix.outputs.ksu_resolved_hash }}
+          ksu_type: ${{ matrix.ksu_type }}
+          ksu_hash: ${{ matrix.ksu_hash }}
           susfs_hash: ${{ steps.susfs-hash.outputs.hash }}
           optimize_level: ${{ inputs.optimize_level }}
           clean_build: ${{ inputs.clean_build }}
+          debug: ${{ inputs.debug }}
+          build_timestamp: ${{ inputs.build_timestamp }}
           feature_susfs: ${{ inputs.feature_susfs }}
           feature_bbg: ${{ inputs.feature_bbg }}
           feature_bbr: ${{ inputs.feature_bbr }}
@@ -348,7 +350,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ always() }}
+    if: ${{ always() && inputs.make_release == true }}
     steps:
       - uses: actions/checkout@v4
       

@@ -14,6 +14,12 @@ inputs:
     required: true
   clean_build:
     required: true
+  debug:
+    required: false
+    default: 'false'
+  build_timestamp:
+    required: false
+    default: ''
   feature_susfs:
     required: true
   feature_bbg:
@@ -527,6 +533,15 @@ runs:
         # Localversion branding
         LOCALVERSION="-pratikkabra143"
         echo "LOCALVERSION=$LOCALVERSION" >> $GITHUB_ENV
+        
+        # Build Timestamp support
+        if [ -n "${{ inputs.build_timestamp }}" ]; then
+          export KBUILD_BUILD_TIMESTAMP="${{ inputs.build_timestamp }}"
+          echo "📅 Using custom build timestamp: $KBUILD_BUILD_TIMESTAMP"
+        else
+          export KBUILD_BUILD_TIMESTAMP="$(date -u)"
+          echo "📅 Using current UTC build timestamp: $KBUILD_BUILD_TIMESTAMP"
+        fi
         
         # Build System Selector
         if [ -f "tools/bazel" ]; then
