@@ -223,6 +223,16 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Install dependencies"
+          # Wait for any background apt/dpkg processes (from disk cleanup) to finish
+          echo "Waiting for dpkg lock..."
+          for i in $(seq 1 30); do
+            if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+              echo "  Lock held, waiting... ($i/30)"
+              sleep 2
+            else
+              break
+            fi
+          done
           sudo apt-get -o Acquire::Retries=3 update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             git curl ca-certificates build-essential clang lld flex bison \
