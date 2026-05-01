@@ -117,6 +117,12 @@ runs:
           KSU_VERSION=$(expr $COMMITS_COUNT "+" $BASE_VERSION)
           sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
           
+          cd ..
+          KSU_COMMIT_SHA=$(git rev-parse HEAD)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
+          cd kernel
+          
           if [ -f ksu.c ]; then
             sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
           fi
@@ -139,6 +145,12 @@ runs:
           BASE_VERSION=30000
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) "+" $BASE_VERSION)
           sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" Makefile
+          
+          cd ..
+          KSU_COMMIT_SHA=$(git rev-parse HEAD)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> $GITHUB_ENV
+          cd kernel
           
           if [ -f ksu.c ]; then
             sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
@@ -169,6 +181,11 @@ runs:
         
         susfs_version=$(grep '#define SUSFS_VERSION' common/include/linux/susfs.h | awk -F'"' '{print $2}')
         echo "SUSVER=$susfs_version" >> $GITHUB_ENV
+        
+        cd "$SUSFS_DIR"
+        SUSFS_COMMIT_SHA=$(git rev-parse HEAD || echo "unknown")
+        echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA" >> $GITHUB_ENV
+        cd "$GKI_ROOT"
         
         # Apply KSU integration patch based on version
         case "$susfs_version" in
@@ -317,6 +334,74 @@ runs:
         CONFIG_KSU_SUSFS_SUS_SU=n
         EOF
 
+    - name: Apply KSU Hooks
+      shell: bash
+      if: ${{ env.NEED_HOOKS == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Apply KSU hooks"
+        cd "$GKI_ROOT/common"
+        patch -p1 < "$PATCHES_DIR/next/scope_min_manual_hooks_v1.4.patch" || true
+        echo "✅ KSU hooks applied"
+        echo "::endgroup::"
+
+    - name: Apply Other Patches
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Apply Other patches"
+        cd "$GKI_ROOT/common"
+        KERNEL_VERSION="${VERSION_MAJOR}"
+        MIN_VERSION="5.16"
+        
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
+          echo "Patching ptrace!"
+          patch -p1 -F 3 < "$PATCHES_DIR/gki_ptrace.patch" || true
+        else
+          echo "Kernel >= $MIN_VERSION, skipping ptrace patch"
+        fi
+        
+        patch -p1 --forward < "$PATCHES_DIR/common/optimized_mem_operations.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/file_struct_8bytes_align.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/reduce_cache_pressure.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/mem_opt_prefetch.patch" || true
+        
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | tail -n1)" = "$KERNEL_VERSION" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/common/optimise_memcmp.patch" || true
+        elif [ "$(printf '%s\n' "$KERNEL_VERSION" "5.11" | sort -V | tail -n1)" = "$KERNEL_VERSION" ]; then
+          sed -e 's/SYM_FUNC_START(__pi_memcmp)/SYM_FUNC_START_WEAK_PI(memcmp)/' -e 's/SYM_FUNC_END(__pi_memcmp)/SYM_FUNC_END_PI(memcmp)/' -e 's/SYM_FUNC_ALIAS_WEAK(memcmp, __pi_memcmp)/EXPORT_SYMBOL_NOKASAN(memcmp)/' "$PATCHES_DIR/common/optimise_memcmp.patch" | patch -p1 --forward || true
+        fi
+        
+        patch -p1 --forward < "$PATCHES_DIR/common/minimise_wakeup_time.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/int_sqrt.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/force_tcp_nodelay.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/reduce_gc_thread_sleep_time.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/add_timeout_wakelocks_globally.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/f2fs_reduce_congestion.patch" || true
+        patch -p1 --forward < "$PATCHES_DIR/common/reduce_freeze_timeout.patch" || true
+        
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
+          patch -p1 --forward < "$PATCHES_DIR/common/clear_page_16bytes_align.patch" || true
+        else
+          cat "$PATCHES_DIR/common/clear_page_16bytes_align.patch" | sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' | patch -p1 -F3 --forward || true
+        fi
+        
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/add_limitation_scaling_min_freq.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/re_write_limitation_scaling_min_freq.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/adjust_cpu_scan_order.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/avoid_extra_s2idle_wake_attempts.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/disable_cache_hot_buddy.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/f2fs_enlarge_min_fsync_blocks.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/increase_ext4_default_commit_age.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/increase_sk_mem_packets.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/reduce_pci_pme_wakeups.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/silence_irq_cpu_logspam.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/silence_system_logspam.patch" || true
+        patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
+        
+        echo "✅ Other patches applied"
+        echo "::endgroup::"
+
     - name: Apply Features
       shell: bash
       run: |
@@ -375,7 +460,17 @@ runs:
         fi
         
         if [ "${{ inputs.feature_ds }}" = "true" ]; then
-          patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch" || true
+          if [ "$ANDROID_VER" = "android16" ] && [ "$VERSION_MAJOR" = "6.12" ]; then
+            patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_sysvipc_kabi_a16-6.12.patch" || true
+          elif [ "$ANDROID_VER" = "android12" ] && [ "$VERSION_MAJOR" = "5.10" ]; then
+            patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_sysvipc_kabi_bypass_a16-6.12_below.patch" || true
+            patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_abi_padding_for_posix_mqueue.patch" || true
+          else
+            patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/fix_sysvipc_kabi_6_7_8.patch" || true
+          fi
+          
+          patch -p1 --forward < "$PATCHES_DIR/common/droidspaces/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch" || true
+          
           cat >> arch/arm64/configs/gki_defconfig <<EOF
           CONFIG_SYSVIPC=y
           CONFIG_DEVTMPFS=y
@@ -388,14 +483,40 @@ runs:
         fi
         
         if [ "${{ inputs.feature_ntsync }}" = "true" ]; then
-          patch -p1 --forward < "$PATCHES_DIR/common/ntsync/ntsync_compat_${ANDROID_VER}-${VERSION_MAJOR}.patch" || true
+          if [ -f "$PATCHES_DIR/common/ntsync/ntsync_compat_${ANDROID_VER}-${VERSION_MAJOR}.patch" ]; then
+            patch -p1 --forward < "$PATCHES_DIR/common/ntsync/ntsync_compat_${ANDROID_VER}-${VERSION_MAJOR}.patch" || true
+          fi
           patch -p1 --forward < "$PATCHES_DIR/common/ntsync/ntsync_base.patch" || true
           echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/gki_defconfig
+          
+          if [ "$ANDROID_VER" = "android16" ] && [ "$VERSION_MAJOR" = "6.12" ]; then
+            rm -f include/uapi/linux/ntsync.h || true
+            rm -f drivers/misc/ntsync.c || true
+          fi
         fi
-
+        
         if [ "${{ inputs.feature_unicode }}" = "true" ]; then
-          patch -p1 --forward < "$PATCHES_DIR/common/unicode_bypass_fix_6.1+.patch" || true
+          if [ "$(printf '%s\n' "$VERSION_MAJOR" "5.16" | sort -V | head -n1)" = "$VERSION_MAJOR" ]; then
+              patch -p1 --forward < "$PATCHES_DIR/common/unicode_bypass_fix_6.1-.patch" || true
+          else
+              patch -p1 --forward < "$PATCHES_DIR/common/unicode_bypass_fix_6.1+.patch" || true
+          fi
         fi
+        
+        echo "Add Tmpfs Support"
+        cat >> arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
+        EOF
+        
+        echo "Add Build based configs"
+        cat >> arch/arm64/configs/gki_defconfig <<EOF
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
+        CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n
+        CONFIG_OPTIMIZE_INLINING=y
+        CONFIG_FRAME_WARN=0
+        CONFIG_TRACEPOINTS=y
+        EOF
 
     - name: Compile Kernel
       shell: bash
@@ -456,12 +577,17 @@ runs:
         cd "$AK3_DIR"
         sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh
         
-        ZIP_NAME="AnyKernel3_${{ env.VERSION_SUBLEVEL }}_${{ inputs.ksu_type }}.zip"
+        if [ "${{ inputs.feature_susfs }}" = "true" ]; then
+          ZIP_NAME="AK3_GKI_${ANDROID_VER}-${VERSION_MAJOR}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
+        else
+          ZIP_NAME="AK3_GKI_${ANDROID_VER}-${VERSION_MAJOR}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
+        fi
         zip -r9 "$ZIP_NAME" * -x "*.git*" "README.md"
         
         # Artifacts dir
         mkdir -p "$WORKSPACE/artifacts"
         mv "$ZIP_NAME" "$WORKSPACE/artifacts/"
+        echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
         
         # Boot Image Signing
         if [ -f "$BOOT_PATH" ]; then
@@ -481,10 +607,10 @@ runs:
               --key rsa2048.pem \
               --algorithm SHA256_RSA2048
               
-            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_${{ env.VERSION_SUBLEVEL }}_signed.img"
+            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_GKI_${ANDROID_VER}-${VERSION_MAJOR}_signed.img"
           else
             echo "::warning::BOOT_SIGN_KEY not set. Cannot sign boot.img."
-            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_${{ env.VERSION_SUBLEVEL }}_unsigned.img"
+            mv "$BOOT_PATH" "$WORKSPACE/artifacts/boot_GKI_${ANDROID_VER}-${VERSION_MAJOR}_unsigned.img"
           fi
         fi
 
@@ -494,23 +620,62 @@ runs:
         set -euo pipefail
         {
           echo "### 🎯 Kernel Build Summary"
+          echo ""
           echo "| Metric | Value |"
           echo "|--------|-------|"
-          echo "| **Android Version** | ${{ env.ANDROID_VER }} |"
-          echo "| **Kernel Version** | ${{ env.VERSION_SUBLEVEL }} |"
-          echo "| **KSU Type** | ${{ inputs.ksu_type }} |"
-          echo "| **SUSFS** | ${{ inputs.feature_susfs }} |"
-          echo "| **BBG** | ${{ inputs.feature_bbg }} |"
+          echo "| **GKI Kernel** | \`${ANDROID_VER}-${VERSION_MAJOR}\` |"
+          if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+            echo "| **KSUN Version** | ${KSUVER:-unknown} |"
+          else
+            echo "| **KSU Version** | ${KSUVER:-unknown} |"
+          fi
+          
+          KSU_SHA="${KSU_COMMIT_SHA:-unknown}"
+          if [ "$KSU_SHA" != "unknown" ]; then
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              echo "| **KSUN Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/pratikkabra143/KernelSU-Next/commit/$KSU_SHA) |"
+            else
+              echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/tiann/KernelSU/commit/$KSU_SHA) |"
+            fi
+          else
+            echo "| **KSU Commit** | unknown |"
+          fi
+          
+          if [ "${{ inputs.feature_susfs }}" = "true" ]; then
+            echo "| **SUSFS Version** | ${SUSVER:-unknown} |"
+            SUSFS_SHA="${SUSFS_COMMIT_SHA:-unknown}"
+            if [ "$SUSFS_SHA" != "unknown" ]; then
+              echo "| **SUSFS Commit** | [\`${SUSFS_SHA:0:8}\`](https://gitlab.com/simonpunk/susfs4ksu/-/commit/$SUSFS_SHA) |"
+            else
+              echo "| **SUSFS Commit** | unknown |"
+            fi
+          fi
+          
+          echo ""
+          echo "### 🔧 GKI Features"
+          echo ""
+          echo "| Feature | Status |"
+          echo "|---------|--------|"
           echo "| **BBR** | ${{ inputs.feature_bbr }} |"
+          echo "| **BBG** | ${{ inputs.feature_bbg }} |"
           echo "| **TTL** | ${{ inputs.feature_ttl }} |"
-          echo "| **IP SET** | ${{ inputs.feature_ip_set }} |"
+          echo "| **IP_SET & IPv6 NAT** | ${{ inputs.feature_ip_set }} |"
           echo "| **Unicode Fix** | ${{ inputs.feature_unicode }} |"
-          echo "| **Droidspaces** | ${{ inputs.feature_ds }} |"
           echo "| **NTSync** | ${{ inputs.feature_ntsync }} |"
+          echo "| **Droidspaces** | ${{ inputs.feature_ds }} |"
+          
+          echo ""
+          echo "### 📊 Build Metrics"
+          echo ""
+          echo "| Metric | Value |"
+          echo "|--------|-------|"
+          echo "| **Optimization** | ${{ inputs.optimize_level }} |"
+          echo "| **Clean Build** | ${{ inputs.clean_build }} |"
+          echo "| **Artifact Name** | \`${{ env.ZIP_NAME }}\` |"
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-${{ env.VERSION_SUBLEVEL }}
+        name: ${{ env.ZIP_NAME }}
         path: ${{ github.workspace }}/artifacts/*
