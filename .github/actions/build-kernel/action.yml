@@ -88,22 +88,7 @@ runs:
           fi
         fi
 
-    - name: Sync GKI Kernel Source
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p "$GKI_ROOT"
-        cd "$GKI_ROOT"
-        
-        repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1
-        repo sync -c -j$(nproc) --no-clone-bundle --no-tags --optimized-fetch
-        
-        # Verify sync
-        if [ ! -d "common" ]; then
-          echo "::error::Kernel source sync failed!"
-          exit 1
-        fi
-        echo "✅ Kernel source synced."
+
 
     - name: Inject KernelSU
       shell: bash

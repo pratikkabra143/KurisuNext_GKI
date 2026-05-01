@@ -1,0 +1,45 @@
+name: 'Download and configure Kernel Source code'
+
+inputs:
+  source_location:
+    description: 'Folder path to save Kernel source'
+    required: true
+    type: string
+  github_token:
+    description: 'GitHub Token'
+    required: true
+  debug:
+    description: 'Enable Logs'
+    required: false
+    type: boolean
+    default: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Sync Kernel Source
+      shell: bash
+      working-directory: ${{ inputs.source_location }}
+      run: |
+        echo "::group::Download Manifest Archives"
+        # GKI manifests contain nested <include> tags, so we must use 'repo'
+        
+        # We assume BRANCH is already set in the environment by the caller
+        if [ -z "$BRANCH" ]; then
+          echo "::error::BRANCH environment variable is not set!"
+          exit 1
+        fi
+        
+        echo "Initializing repo for branch: $BRANCH"
+        repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1
+        
+        echo "Syncing repositories..."
+        repo sync -c -j$(nproc) --no-clone-bundle --no-tags --optimized-fetch
+        
+        if [ ! -d "common" ]; then
+          echo "::error::Kernel source sync failed! 'common' directory not found."
+          exit 1
+        fi
+        
+        echo "✅ Kernel source synced successfully."
+        echo "::endgroup::"

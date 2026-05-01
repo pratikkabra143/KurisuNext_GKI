@@ -191,13 +191,100 @@ jobs:
           docker-images: true
           swap-storage: true
           
-      - uses: actions/checkout@v4
-      
-      - name: Set up Environment
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: 🧹 Emergency Disk Cleanup
+        uses: ./.github/actions/disk-cleanup
+        
+      - name: Install Minimal Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git python3 libssl-dev zip gcc-aarch64-linux-gnu ccache
-      
+          set -euo pipefail
+          echo "::group::Install dependencies"
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential clang lld flex bison \
+            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
+            libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz aria2
+          sudo apt-get clean
+          echo "✅ Dependencies installed"
+          echo "::endgroup::"
+
+      - name: Install ccache with ECS by cctv18
+        run: |
+          set -euo pipefail
+          echo "::group::Install ccache with ECS"
+          curl -LfsS --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 30 --tcp-fastopen -H "User-Agent: Mozilla/5.0" "https://github.com/WildKernels/kernel_patches/raw/refs/heads/main/ccache/ccache-x86-64" -o ccache
+          sudo cp -f ./ccache /usr/bin/ccache
+          sudo chmod +x /usr/bin/ccache
+          rm -f ./ccache
+          echo "[DEBUG] Ccache version : $(ccache --version)"
+          echo "::endgroup::"
+
+      - name: ♻️ Configure ccache & LTO cache (bounded)
+        run: |
+          echo "::group::Configure ccache environment"
+          set -euo pipefail
+          if command -v ccache >/dev/null 2>&1; then
+            CACHE_DIR="${{ github.workspace }}/.ccache"
+            LDCACHE_DIR="${{ github.workspace }}/.ld_cache"
+            CCACHE_LOG="${{ github.workspace }}/ccache.log"
+            mkdir -p "$CACHE_DIR"
+            mkdir -p "$LDCACHE_DIR"
+            
+            SETTINGS=(
+              "CCACHE_DIR=$CACHE_DIR"
+              "LDCACHE_DIR=$LDCACHE_DIR"
+              "CCACHE_MAXSIZE=12G"
+              "CCACHE_COMPILERCHECK=content"
+              "CCACHE_BASEDIR=${GITHUB_WORKSPACE}"
+              "CCACHE_NOHASHDIR=true"
+              "CCACHE_IGNOREOPTIONS=--sysroot*"
+              "CCACHE_COMPRESSION=true"
+              "CCACHE_COMPRESSION_LEVEL=3"
+              "CCACHE_DIRECT=true"
+              "CCACHE_FILE_CLONE=true"
+              "CCACHE_LOGFILE=$CCACHE_LOG"
+            )
+            for setting in "${SETTINGS[@]}"; do
+              export "$setting"
+              echo "$setting" >> $GITHUB_ENV
+            done
+            ccache -z
+            echo "✅ ccache configured"
+          fi
+          echo "::endgroup::"
+          
+      - name: ♻️ Restore ccache & LTO cache
+        if: ${{ inputs.clean_build == false }}
+        uses: ./.github/actions/cache/restore
+        with:
+          key_prefix: "gki-${{ matrix.kernel_version }}"
+          
+      - name: Parse Branch and Set ENV
+        run: |
+          KVER="${{ matrix.kernel_version }}"
+          IFS='-' read -ra PARTS <<< "$KVER"
+          VERSION_SUBLEVEL="${PARTS[0]}"
+          IFS='.' read -ra VPARTS <<< "$VERSION_SUBLEVEL"
+          VERSION_MAJOR="${VPARTS[0]}.${VPARTS[1]}"
+          ANDROID_VER="${PARTS[1]}"
+          if [ "${PARTS[2]}" = "lts" ]; then
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}"
+          elif [ "${PARTS[2]}" = "release" ]; then
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-release"
+          else
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${PARTS[2]}-${PARTS[3]}"
+          fi
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          
+      - name: 📥 Sync Kernel Source
+        uses: ./.github/actions/kernel-source-sync
+        with:
+          source_location: "${{ github.workspace }}/gki_workspace"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          debug: false
+          
       - name: Build Kernel
         env:
           BOOT_SIGN_KEY: ${{ secrets.BOOT_SIGN_KEY }}
@@ -217,6 +304,12 @@ jobs:
           feature_unicode: ${{ inputs.feature_unicode }}
           feature_ds: ${{ inputs.feature_ds }}
           feature_ntsync: ${{ inputs.feature_ntsync }}
+          
+      - name: 💾 Save ccache & LTO cache
+        if: always() && inputs.clean_build == false
+        uses: ./.github/actions/cache/save
+        with:
+          key_prefix: "gki-${{ matrix.kernel_version }}"
 
   release:
     needs: build
