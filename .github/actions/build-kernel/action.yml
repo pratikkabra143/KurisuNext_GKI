@@ -147,7 +147,6 @@ runs:
           cd ../..
           
           echo "CONFIG_KSU=y" >> "$FRAGMENT_FILE"
-          echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$FRAGMENT_FILE"
           
         else
           echo "Injecting KernelSU..."
@@ -486,7 +485,6 @@ runs:
         CONFIG_DEVTMPFS=y
         CONFIG_PID_NS=y
         CONFIG_POSIX_MQUEUE=y
-        CONFIG_NETFILTER_XT_TARGET_REJECT=y
         CONFIG_NETFILTER_XT_TARGET_LOG=y
         CONFIG_NETFILTER_XT_MATCH_RECENT=y
         EOF
