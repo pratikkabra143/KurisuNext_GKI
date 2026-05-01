@@ -17,6 +17,15 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Prepare Directory and Install Repo
+      shell: bash
+      run: |
+        mkdir -p "${{ inputs.source_location }}"
+        mkdir -p ~/.bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
+        chmod a+rx ~/.bin/repo
+        echo "$HOME/.bin" >> $GITHUB_PATH
+
     - name: Sync Kernel Source
       shell: bash
       working-directory: ${{ inputs.source_location }}
