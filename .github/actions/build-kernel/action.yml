@@ -36,6 +36,9 @@ inputs:
     required: true
   feature_ntsync:
     required: true
+  feature_rek:
+    required: false
+    default: 'false'
   local_version:
     required: false
     default: 'pratikkabra143'
@@ -390,6 +393,20 @@ runs:
         # patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
         
         echo "✅ Other patches applied"
+        echo "::endgroup::"
+
+    - name: Integrate Re-Kernel
+      shell: bash
+      if: ${{ inputs.feature_rek == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Integrate Re-Kernel"
+        cd "$GKI_ROOT/common"
+        git clone https://github.com/Sakion-Team/Re-Kernel.git ./re-kernel
+        cd ./re-kernel
+        chmod +x ./install.sh
+        ./install.sh
+        echo "✅ Re-Kernel integrated"
         echo "::endgroup::"
 
     - name: Add BBG

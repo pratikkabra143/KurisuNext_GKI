@@ -128,6 +128,11 @@ on:
         required: true
         type: boolean
         default: true
+      feature_rek:
+        description: 'Enable Re-Kernel Vendor Hooks'
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   set-matrix:
@@ -384,6 +389,7 @@ jobs:
           feature_unicode: ${{ inputs.feature_unicode }}
           feature_ds: ${{ inputs.feature_ds }}
           feature_ntsync: ${{ inputs.feature_ntsync }}
+          feature_rek: ${{ inputs.feature_rek }}
           local_version: ${{ inputs.local_version }}
           
       - name: 💾 Save ccache & LTO cache
@@ -533,6 +539,12 @@ jobs:
           if [ "${{ inputs.feature_ntsync }}" == "true" ]; then
             cat << EOF >> release_notes.md
           - **NTSync** - High-performance synchronization primitives
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_rek }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Re-Kernel** - Vendor hooks based kernel protections
           EOF
           fi
           
