@@ -702,6 +702,13 @@ runs:
           sed -i '/protected_exports_list.*abi_gki_protected_exports_aarch64/d' common/BUILD.bazel
           sed -i '/kmi_symbol_list_strict_mode/d' common/BUILD.bazel
           rm -rf common/android/abi_gki_protected_exports_* 2>/dev/null || true
+          # Sanitize ABI symbol lists — SUSFS patches corrupt these INI files,
+          # causing flatten_symbol_list.py ConfigParser crash
+          for abi_file in common/android/abi_gki_aarch64*; do
+            if [ -f "$abi_file" ]; then
+              echo "[abi_symbol_list]" > "$abi_file"
+            fi
+          done
           # Remove -dirty / -maybe-dirty from version strings
           sed -i 's/-dirty//' common/scripts/setlocalversion 2>/dev/null || true
           sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
