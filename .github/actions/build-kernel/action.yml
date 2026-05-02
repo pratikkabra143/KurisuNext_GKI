@@ -329,6 +329,27 @@ runs:
         KERNEL_VERSION="${VERSION_MAJOR}"
         MIN_VERSION="5.16"
         
+        # Glibc 2.38 Compatibility Fix for older kernels
+        if [ "$VERSION_MAJOR" = "5.10" ] || [ "$VERSION_MAJOR" = "5.15" ]; then
+          echo "Applying Glibc 2.38 fix for parse-options.c..."
+          sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+        fi
+        
+        # # Samsung & Xiaomi 6.6 ABI Compatibility
+        # if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+        #   echo "Patching ABI symbols for Samsung/Xiaomi compatibility..."
+        #   if [ -f android/abi_gki_aarch64_galaxy ]; then
+        #     grep -q "kdp_set_cred_non_rcu" android/abi_gki_aarch64_galaxy || echo "  kdp_set_cred_non_rcu" >> android/abi_gki_aarch64_galaxy
+        #     grep -q "min_kdp" android/abi_gki_aarch64_galaxy || echo "  min_kdp" >> android/abi_gki_aarch64_galaxy
+        #   fi
+        #   if [ -f android/abi_gki_aarch64_xiaomi ]; then
+        #     grep -q "device_find_any_child" android/abi_gki_aarch64_xiaomi || echo "  device_find_any_child" >> android/abi_gki_aarch64_xiaomi
+        #   fi
+        # fi
+        
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
           patch -p1 -F 3 < "$PATCHES_DIR/gki_ptrace.patch" || true
