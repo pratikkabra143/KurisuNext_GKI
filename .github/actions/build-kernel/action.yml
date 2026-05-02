@@ -87,7 +87,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        git clone https://github.com/TheWildJames/AnyKernel3.git -b gki-2.0 "$AK3_DIR"
+        git clone https://github.com/pratikkabra143/AnyKernel3-GKI.git -b master "$AK3_DIR"
         git clone https://github.com/TheWildJames/kernel_patches.git "$PATCHES_DIR"
         
         if [ "${{ inputs.feature_susfs }}" = "true" ]; then
