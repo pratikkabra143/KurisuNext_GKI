@@ -1,0 +1,515 @@
+name: 🛠️ Build Custom GKI Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      make_release:
+        description: 'Do you want to create a release?'
+        required: true
+        type: boolean
+        default: false
+      kernel_version:
+        description: 'Specific Kernel Version (e.g. 6.1.118-android14-2025-01)'
+        required: true
+        type: string
+        default: '6.1.118-android14-2025-01'
+      ksu_type:
+        description: 'KernelSU Type (KSUN or KSU)'
+        required: true
+        type: choice
+        options:
+          - KSUN
+          - KSU
+        default: 'KSUN'
+      ksu_hash:
+        description: 'KernelSU Branch or Commit Hash (e.g. dev or main)'
+        required: true
+        type: string
+        default: '2210069c8a6960a504620543609e1149bf74de11'
+      android12-5_10_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android12-5.10'
+        type: string
+        default: '674f72b6f683e837d7f557704cabe00a83eeb0b4'
+      android13-5_10_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android13-5.10'
+        type: string
+        default: '674f72b6f683e837d7f557704cabe00a83eeb0b4'
+      android13-5_15_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android13-5.15'
+        type: string
+        default: 'eaa5d299dd85a4230f936b94dc5dd8303f27130a'
+      android14-5_15_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android14-5.15'
+        type: string
+        default: 'eaa5d299dd85a4230f936b94dc5dd8303f27130a'
+      android14-6_1_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android14-6.1'
+        type: string
+        default: '971cc4e770b7f344a4df35ce92d7a859e6a1e0fd'
+      android15-6_6_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android15-6.6'
+        type: string
+        default: '85bcfac5edc8ba7808581e8d0a3ca9c7deca78e4'
+      android16-6_12_susfs_branch_or_commit:
+        description: 'Enter SusFS Branch or commit hash for android16-6.12'
+        type: string
+        default: '5fbf04e8c6c08b8ca759e0ac81bed7d2dc96f7f8'
+      optimize_level:
+        description: 'Compiler optimization level'
+        required: true
+        type: choice
+        options:
+          - O2
+          - O3
+        default: 'O2'
+      clean_build:
+        description: 'Force clean build (bypass ccache)'
+        required: true
+        type: boolean
+        default: false
+      debug:
+        description: 'Enable debug mode: dumping debug related artifacts and show some debug logs'
+        required: false
+        type: boolean
+        default: false
+      build_timestamp:
+        description: 'Custom kernel build timestamp for uname -a (e.g. "Tue Feb 10 10:01:02 UTC 2026"). Leave empty for current time.'
+        type: string
+        default: ''
+      local_version:
+        description: 'Custom localversion (e.g. pratikkabra143)'
+        type: string
+        default: 'pratikkabra143'
+      
+      # 🛡️ Feature Flags
+      feature_susfs:
+        description: 'Enable SUSFS (Root Hiding)'
+        required: true
+        type: boolean
+        default: true
+      feature_bbg:
+        description: 'Enable Baseband Guard (BBG)'
+        required: true
+        type: boolean
+        default: true
+      feature_bbr:
+        description: 'Enable BBR Congestion Control'
+        required: true
+        type: boolean
+        default: true
+      feature_ttl:
+        description: 'Enable TTL Target'
+        required: true
+        type: boolean
+        default: true
+      feature_ip_set:
+        description: 'Enable IP_SET & IPv6 NAT'
+        required: true
+        type: boolean
+        default: true
+      feature_unicode:
+        description: 'Enable Unicode Bypass Fix'
+        required: true
+        type: boolean
+        default: true
+      feature_ds:
+        description: 'Enable Droidspaces'
+        required: true
+        type: boolean
+        default: true
+      feature_ntsync:
+        description: 'Enable NTSync'
+        required: true
+        type: boolean
+        default: true
+      feature_rek:
+        description: 'Enable Re-Kernel Vendor Hooks'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+          
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: 🧹 Emergency Disk Cleanup
+        uses: ./.github/actions/disk-cleanup
+        
+      - name: Install Minimal Dependencies
+        run: |
+          set -euo pipefail
+          echo "::group::Install dependencies"
+          echo "Waiting for dpkg lock..."
+          for i in $(seq 1 30); do
+            if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+              echo "  Lock held, waiting... ($i/30)"
+              sleep 2
+            else
+              break
+            fi
+          done
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential clang lld flex bison \
+            libelf-dev libssl-dev libncurses-dev zlib1g-dev liblz4-tool \
+            libxml2-utils rsync unzip dwarves file python3 ccache jq bc dos2unix kmod libdw-dev elfutils pigz aria2
+          sudo apt-get clean
+          echo "✅ Dependencies installed"
+          echo "::endgroup::"
+
+      - name: ♻️ Configure ccache
+        run: |
+          echo "::group::Configure ccache environment"
+          set -euo pipefail
+          if command -v ccache >/dev/null 2>&1; then
+            CACHE_DIR="${{ github.workspace }}/.ccache"
+            mkdir -p "$CACHE_DIR"
+            
+            # Configure ccache
+            ccache --max-size=12G
+            ccache --set-config=compression=true
+            ccache -z
+            
+            # Export basic variable to GitHub actions ENV
+            echo "CCACHE_DIR=$CACHE_DIR" >> $GITHUB_ENV
+            echo "✅ ccache configured"
+          fi
+          echo "::endgroup::"
+          
+      - name: ♻️ Restore ccache & LTO cache
+        if: ${{ inputs.clean_build == false }}
+        uses: ./.github/actions/cache/restore
+        with:
+          cache_path: "${{ github.workspace }}/.ccache"
+          cache_key: "gki-${{ inputs.kernel_version }}"
+          cache_bucket: "general-cache"
+          
+      - name: Parse Branch and Set ENV
+        run: |
+          KVER="${{ inputs.kernel_version }}"
+          IFS='-' read -ra PARTS <<< "$KVER"
+          VERSION_SUBLEVEL="${PARTS[0]}"
+          IFS='.' read -ra VPARTS <<< "$VERSION_SUBLEVEL"
+          VERSION_MAJOR="${VPARTS[0]}.${VPARTS[1]}"
+          ANDROID_VER="${PARTS[1]}"
+          if [ "${PARTS[2]}" = "lts" ]; then
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}"
+          elif [ "${PARTS[2]}" = "release" ]; then
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-release"
+          else
+            SUFFIX=$(IFS='-'; echo "${PARTS[*]:2}")
+            BRANCH="common-${ANDROID_VER}-${VERSION_MAJOR}-${SUFFIX}"
+          fi
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          
+      - name: 📥 Sync Kernel Source
+        uses: ./.github/actions/kernel-source-sync
+        with:
+          source_location: "${{ github.workspace }}/gki_workspace"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          debug: false
+          
+      - name: Resolve SUSFS Hash
+        id: susfs-hash
+        shell: bash
+        run: |
+          KVER="${{ inputs.kernel_version }}"
+          # Parse android version and kernel major from kernel_version
+          IFS='-' read -ra KPARTS <<< "$KVER"
+          K_MAJOR=$(echo "${KPARTS[0]}" | cut -d'.' -f1-2)
+          K_ANDROID="${KPARTS[1]}"
+          
+          case "${K_ANDROID}-${K_MAJOR}" in
+            "android12-5.10")
+              echo "hash=${{ inputs.android12-5_10_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android13-5.10")
+              echo "hash=${{ inputs.android13-5_10_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android13-5.15")
+              echo "hash=${{ inputs.android13-5_15_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android14-5.15")
+              echo "hash=${{ inputs.android14-5_15_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android14-6.1")
+              echo "hash=${{ inputs.android14-6_1_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android15-6.6")
+              echo "hash=${{ inputs.android15-6_6_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            "android16-6.12")
+              echo "hash=${{ inputs.android16-6_12_susfs_branch_or_commit }}" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "::warning::Unknown kernel target ${K_ANDROID}-${K_MAJOR}, using empty SUSFS hash"
+              echo "hash=" >> $GITHUB_OUTPUT
+              ;;
+          esac
+          
+      - name: Build Kernel
+        env:
+          BOOT_SIGN_KEY: ${{ secrets.BOOT_SIGN_KEY }}
+          KSU_PRIVATE_TOKEN: ${{ secrets.KSU_PRIVATE_TOKEN }}
+        uses: ./.github/actions/build-kernel
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+          ksu_type: ${{ inputs.ksu_type }}
+          ksu_hash: ${{ inputs.ksu_hash }}
+          susfs_hash: ${{ steps.susfs-hash.outputs.hash }}
+          optimize_level: ${{ inputs.optimize_level }}
+          clean_build: ${{ inputs.clean_build }}
+          debug: ${{ inputs.debug }}
+          build_timestamp: ${{ inputs.build_timestamp }}
+          feature_susfs: ${{ inputs.feature_susfs }}
+          feature_bbg: ${{ inputs.feature_bbg }}
+          feature_bbr: ${{ inputs.feature_bbr }}
+          feature_ttl: ${{ inputs.feature_ttl }}
+          feature_ip_set: ${{ inputs.feature_ip_set }}
+          feature_unicode: ${{ inputs.feature_unicode }}
+          feature_ds: ${{ inputs.feature_ds }}
+          feature_ntsync: ${{ inputs.feature_ntsync }}
+          feature_rek: ${{ inputs.feature_rek }}
+          local_version: ${{ inputs.local_version }}
+          
+      - name: 💾 Save ccache & LTO cache
+        if: always() && inputs.clean_build == false
+        uses: ./.github/actions/cache/save
+        with:
+          cache_path: "${{ github.workspace }}/.ccache"
+          cache_key: "gki-${{ inputs.kernel_version }}"
+          cache_bucket: "general-cache"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ always() && inputs.make_release == true }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
+      
+      - name: Prepare Release Name
+        run: |
+          DATE=$(date -u '+%Y%m%d_%H%M%S')
+          echo "NEW_TAG=v$DATE" >> $GITHUB_ENV
+          echo "RELEASE_NAME=Custom GKI Release ($DATE)" >> $GITHUB_ENV
+      
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KSU_TYPE="${{ inputs.ksu_type }}"
+          
+          cat << EOF > release_notes.md
+          # 🎯 Custom GKI Kernel with KernelSU & SUSFS
+          
+          > **Build Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')  
+          > **Target:** \`${{ inputs.kernel_version }}\`
+          > **Build ID:** \`${{ github.run_id }}\`  
+          > **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          
+          ---
+          
+          ## 📦 Build Configuration
+          
+          | Component | Version/Setting |
+          |-----------|----------------|
+          | **KernelSU Variant** | \`${KSU_TYPE}\` |
+          | **Optimization Level** | \`${{ inputs.optimize_level }}\` |
+          | **Clean Build** | \`${{ inputs.clean_build }}\` |
+          
+          ---
+          
+          ## ✨ Features & Capabilities
+          
+          ### 🔐 Root Management
+          EOF
+          if [ "$KSU_TYPE" == "KSUN" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Next** - Next-generation kernel-level root solution
+          EOF
+          elif [ "$KSU_TYPE" == "KSU" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU** - Kernel-level root solution
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **SUSFS** - Advanced hiding and security features
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          ### 🛡️ Security & Privacy
+          EOF
+          
+          if [ "${{ inputs.feature_bbg }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Baseband Guard (BBG)** - LSM-based baseband security
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **SUSFS Hide Features**:
+            - ✅ SUS_PATH - Hide suspicious paths
+            - ✅ SUS_MOUNT - Hide mount points
+            - ✅ SUS_KSTAT - Spoof kernel statistics
+            - ✅ SPOOF_UNAME - Kernel version spoofing
+            - ✅ SPOOF_CMDLINE - Boot parameters spoofing
+            - ✅ OPEN_REDIRECT - File access redirection
+            - ✅ SUS_MAP - Memory mapping protection
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_unicode }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Unicode Fix** - Prevent path traversal and detections using non-printable Unicode
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          
+          ### 🚀 Performance & Networking
+          EOF
+          
+          if [ "${{ inputs.feature_bbr }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **BBR** - Improved TCP congestion control
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ip_set }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **IP Set & IPv6 NAT** - Advanced firewall capabilities and IPv6 NAT
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ttl }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **TTL Target Support** - Network packet manipulation
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          - **LTO (Link Time Optimization)** - Optimized binary size and performance
+          - **ccache-accelerated builds** - Faster compilation times
+          - **Optimisation Patches** - Memory, I/O, CPU scheduler, network and other general tunings
+          
+          ### 🔧 System Features
+          - **TMPFS_XATTR** - Extended attributes for tmpfs (Mountify support)
+          - **TMPFS_POSIX_ACL** - POSIX ACLs for tmpfs
+          EOF
+          
+          if [ "${{ inputs.feature_ds }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Droidspaces** - Support Portable Linux containers
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_ntsync }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **NTSync** - High-performance synchronization primitives
+          EOF
+          fi
+          
+          if [ "${{ inputs.feature_rek }}" == "true" ]; then
+            cat << EOF >> release_notes.md
+          - **Re-Kernel** - Vendor hooks based kernel protections
+          EOF
+          fi
+          
+          cat << EOF >> release_notes.md
+          
+          ---
+          
+          ## 📱 Manager Applications
+          
+          ### Official Manager
+          EOF
+          if [ "$KSU_TYPE" == "KSUN" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Next Manager**  
+            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+          EOF
+          elif [ "$KSU_TYPE" == "KSU" ]; then
+            cat << EOF >> release_notes.md
+          - **KernelSU Manager**  
+            → [GitHub Release](https://github.com/tiann/KernelSU/releases)
+          EOF
+          fi
+          cat << EOF >> release_notes.md
+          ### Community Managers
+          - **WildKSU Manager** (Recommended for additional features)  
+            → [GitHub Release](https://github.com/WildKernels/Wild_KSU/releases)
+          
+          ### Required Module
+          - **KSU SUSFS Module** (Required for SUSFS features)  
+            → [GitHub Release](https://github.com/sidex15/ksu_module_susfs/releases)
+          
+          ### Recommended Flasher
+          - **Kernel Flasher** (Required for flashing AnyKernel3 zips and backups)  
+            → [GitHub Release](https://github.com/fatalcoder524/KernelFlasher/releases)
+          
+          ---
+          
+          ## 📥 Installation Instructions
+          
+          ### Prerequisites
+          - Unlocked bootloader.
+          - Backup your current boot image.
+          - Have root access using Magisk / KernelSU / Apatch.
+          
+          ### Via Kernel Flasher
+          1. Download the correct AnyKernel3 ZIP for your device.
+          2. If you previously used another root method, clean it up first:
+              a. **Magisk**: perform a complete uninstall **after flashing the AnyKernel3 ZIP**.
+              b. **APatch**: remove /data/adb contents to avoid leftover root conflicts **after flashing**.
+          3. Flash the ZIP to the active slot using Kernel Flasher.
+          4. Install the corresponding Manager APK.
+          5. Open the app and grant permissions.
+          6. Reboot the device if you performed any cleanup.
+          
+          ---
+          
+          ## 🙏 Credits
+          
+          - **KernelSU & KernelSU-Next Teams** - Root solution
+          - **simonpunk** - SUSFS development
+          - **Google** - Android GKI source
+          - **Community Contributors** - Patches and networking fixes
+          
+          ---
+          
+          **⚡ Built with ❤️ by the community**
+          EOF
+          
+          gh release create "${{ env.NEW_TAG }}" \
+            --title "${{ env.RELEASE_NAME }}" \
+            --notes-file release_notes.md \
+            --draft
+            
+          for file in $(find ./downloaded-artifacts -name "*.zip" -o -name "*.img"); do
+            echo "Uploading $file..."
+            gh release upload "${{ env.NEW_TAG }}" "$file"
+          done
