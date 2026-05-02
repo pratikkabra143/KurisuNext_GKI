@@ -36,6 +36,9 @@ inputs:
     required: true
   feature_ntsync:
     required: true
+  feature_rek:
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -66,6 +69,7 @@ runs:
         
         echo "BRANCH=$BRANCH" >> $GITHUB_ENV
         echo "VERSION_MAJOR=$VERSION_MAJOR" >> $GITHUB_ENV
+        echo "CURRENT_SUB=${VPARTS[2]}" >> $GITHUB_ENV
         echo "ANDROID_VER=$ANDROID_VER" >> $GITHUB_ENV
         echo "VERSION_SUBLEVEL=$VERSION_SUBLEVEL" >> $GITHUB_ENV
         
@@ -252,51 +256,100 @@ runs:
           fi
         fi
         
-        # Fake kernel patch to fix failures
-        fake_patched=0
-        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
-          if ! grep -qxF $'\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' ./fs/proc/task_mmu.c; then
-            echo "nr_subpages Line not found. Fake Patching!"
-            sed -i -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;' -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t \*res = NULL;' ./fs/proc/task_mmu.c
-            fake_patched=1
-            TASK_MMU_VARS_ADDED=1
-          else
-            TASK_MMU_VARS_ADDED=0
-          fi
-          
-          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
-            echo "#include <linux/dma-buf.h> Line not found. Adding missing header"
-            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
-          fi
-        fi
-        
-        if [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "6.1" ]; then
-          if ! grep -qxF $'\tif (!vma_pages(vma))' ./fs/proc/task_mmu.c; then
-            echo "vma_pages Line not found. Fake Patching!"
-            fake_patched=1
-          fi
-          
-          if ! grep -qxF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
-            echo "#include <linux/dma-buf.h> Line not found. Adding missing header"
-            sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
-          fi
-        fi
-        
         # Apply core SUSFS patch
         patch -p1 --forward < "$SUSFS_DIR/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH}.patch" || true
         
-        # Revert Fake kernel patch
-        if [ "$fake_patched" = 1 ]; then
-          if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
-            if [ "${TASK_MMU_VARS_ADDED:-0}" = "1" ]; then
-              echo "Reverting nr_subpages Fake Patching!"
-              sed -i -e '/unsigned int nr_subpages \= __PAGE_SIZE \/ PAGE_SIZE;/d' -e '/pagemap_entry_t \*res = NULL;/d' ./fs/proc/task_mmu.c
+        # Apply version-specific fixes based on sub-level
+        if [[ "$CURRENT_SUB" =~ ^[0-9]+$ ]]; then
+          if [[ "$ANDROID_VER" == "android12" && "$VERSION_MAJOR" == "5.10" ]]; then
+            if [[ "$CURRENT_SUB" -le 209 ]]; then
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+            if [[ "$CURRENT_SUB" -le 117 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a12-5.10/fdinfo.c.patch" ./
+              patch -p1 < fdinfo.c.patch || true
+              sed -i 's/inotify_mark_user_mask(mark)/mark->mask \& IN_ALL_EVENTS/g' ./fs/notify/fdinfo.c
+            fi
+            if [[ "$CURRENT_SUB" -le 43 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a12-5.10/base.c.patch" ./
+              patch -p1 < base.c.patch || true
+            fi
+            if grep -q 'vm_flags_clear(new_vma, VM_PAD_MASK)' ./mm/mmap.c; then
+              sed -i 's/vm_flags_clear(new_vma, VM_PAD_MASK);/new_vma->vm_flags \&= ~VM_PAD_MASK;/g' ./mm/mmap.c
             fi
           fi
-          if [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "6.1" ]; then
-            if grep -qxF $'\t\t\tgoto show_pad;' ./fs/proc/task_mmu.c; then
-              echo "Reverting vma_pages Fake Patching!"
+          
+          if [[ "$ANDROID_VER" == "android13" && "$VERSION_MAJOR" == "5.15" ]]; then
+            if [[ "$CURRENT_SUB" -le 41 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a13-5.15/namespace.c.patch" ./
+              patch -p1 < namespace.c.patch || true
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a13-5.15/fdinfo.c.patch" ./
+              patch -p1 < fdinfo.c.patch || true
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a13-5.15/open.c.patch" ./
+              patch -p1 < open.c.patch || true
+            fi
+            if grep -q 'vm_flags_clear(new_vma, VM_PAD_MASK)' ./mm/mmap.c; then
+              sed -i 's/vm_flags_clear(new_vma, VM_PAD_MASK);/new_vma->vm_flags \&= ~VM_PAD_MASK;/g' ./mm/mmap.c
+            fi
+            if [[ "$CURRENT_SUB" -le 148 ]]; then
               sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+          fi
+          
+          if [[ "$ANDROID_VER" == "android14" && "$VERSION_MAJOR" == "6.1" ]]; then
+            if [[ "$CURRENT_SUB" -le 141 || "$CURRENT_SUB" -ge 145 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a14-6.1/base.c.patch" ./
+              patch -p1 < base.c.patch || true
+            fi
+            if ! grep -qF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+              sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+            fi
+            if grep -q 'susfs_is_current_proc_umounted' ./fs/proc/base.c && ! grep -qF '#include <linux/susfs.h>' ./fs/proc/base.c; then
+              sed -i '/#include <linux\/dma-buf.h>/a #include <linux\/susfs.h>' ./fs/proc/base.c
+            fi
+            if [[ "$CURRENT_SUB" -le 75 ]]; then
+              sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+            fi
+            if grep -q 'DEFAULT_KSU_MNT_ID\|susfs_mnt_id_ida' ./fs/namespace.c && ! grep -qF '#include <linux/susfs_def.h>' ./fs/namespace.c; then
+              sed -i '/#include <linux\/mnt_idmapping.h>/a #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n#include <linux\/susfs_def.h>\n#endif' ./fs/namespace.c
+              if ! grep -q 'extern bool susfs_is_current_ksu_domain' ./fs/namespace.c; then
+                sed -i '/#include "internal.h"/a \\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_false susfs_is_sdcard_android_data_not_decrypted;\nextern bool susfs_is_sdcard_android_data_decrypted __read_mostly;\n\n#define CL_COPY_MNT_NS BIT(25)\n\nstatic __maybe_unused DEFINE_IDA(susfs_mnt_id_ida);\nstatic __maybe_unused DEFINE_IDA(susfs_mnt_group_ida);\n\n#endif' ./fs/namespace.c
+              fi
+            fi
+          fi
+          
+          if [[ "$ANDROID_VER" == "android15" && "$VERSION_MAJOR" == "6.6" ]]; then
+            if [[ "$CURRENT_SUB" -ge 98 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a15-6.6/base.c.patch" ./
+              patch -p1 < base.c.patch || true
+            fi
+            if grep -q 'AS_FLAGS_SUS_MAP\|susfs_is_current_proc_umounted' ./fs/proc/base.c && ! grep -qF 'susfs_def.h' ./fs/proc/base.c; then
+              if ! grep -qF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+                sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+              fi
+              sed -i '/#include <linux\/dma-buf.h>/a #endif' ./fs/proc/base.c
+              sed -i '/#include <linux\/dma-buf.h>/a #include <linux\/susfs_def.h>' ./fs/proc/base.c
+              sed -i '/#include <linux\/dma-buf.h>/a #ifdef CONFIG_KSU_SUSFS_SUS_MAP' ./fs/proc/base.c
+            fi
+            if grep -q 'SUSFS_IS_INODE_SUS_MAP\|SUSFS_IS_INODE_OPEN_REDIRECT' ./fs/proc/base.c && ! grep -qF '#include <linux/susfs.h>' ./fs/proc/base.c; then
+              if ! grep -qF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+                sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+              fi
+              sed -i '/#include <linux\/dma-buf.h>/a #include <linux\/susfs.h>' ./fs/proc/base.c
+            fi
+            if [[ "$CURRENT_SUB" -le 58 ]]; then
+              cp "$PATCHES_DIR/wild/susfs_fix_patches/v${susfs_version}/a15-6.6/task_mmu.c.patch" ./
+              patch -p1 < task_mmu.c.patch || true
+            fi
+          fi
+          
+          if [[ "$ANDROID_VER" == "android16" && "$VERSION_MAJOR" == "6.12" ]]; then
+            SETUID_HOOK="$GKI_ROOT/common/drivers/kernelsu/setuid_hook.c"
+            if [ -f "$SETUID_HOOK" ]; then
+              sed -i 's/defined(CONFIG_KSU_MANUAL_HOOK))/!defined(CONFIG_KSU_SUSFS) \&\& defined(CONFIG_KSU_MANUAL_HOOK))/' "$SETUID_HOOK"
+            fi
+            if grep -q 'susfs_is_current_proc_umounted' ./fs/exec.c && ! grep -qF '#include <linux/susfs_def.h>' ./fs/exec.c; then
+              sed -i '/#include <linux\/ksm\.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' ./fs/exec.c
             fi
           fi
         fi
@@ -323,6 +376,27 @@ runs:
         cd "$GKI_ROOT/common"
         KERNEL_VERSION="${VERSION_MAJOR}"
         MIN_VERSION="5.16"
+        
+        # Glibc 2.38 Compatibility Fix for older kernels
+        if [ "$VERSION_MAJOR" = "5.10" ] || [ "$VERSION_MAJOR" = "5.15" ]; then
+          echo "Applying Glibc 2.38 fix for parse-options.c..."
+          sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+        fi
+        
+        # Samsung & Xiaomi 6.6 ABI Compatibility
+        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+          echo "Patching ABI symbols for Samsung/Xiaomi compatibility..."
+          if [ -f android/abi_gki_aarch64_galaxy ]; then
+            grep -q "kdp_set_cred_non_rcu" android/abi_gki_aarch64_galaxy || echo "  kdp_set_cred_non_rcu" >> android/abi_gki_aarch64_galaxy
+            grep -q "min_kdp" android/abi_gki_aarch64_galaxy || echo "  min_kdp" >> android/abi_gki_aarch64_galaxy
+          fi
+          if [ -f android/abi_gki_aarch64_xiaomi ]; then
+            grep -q "device_find_any_child" android/abi_gki_aarch64_xiaomi || echo "  device_find_any_child" >> android/abi_gki_aarch64_xiaomi
+          fi
+        fi
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
@@ -393,6 +467,20 @@ runs:
         # patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
         
         echo "✅ Other patches applied"
+        echo "::endgroup::"
+
+    - name: Integrate Re-Kernel
+      shell: bash
+      if: ${{ inputs.feature_rek == 'true' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Integrate Re-Kernel"
+        cd "$GKI_ROOT/common"
+        git clone https://github.com/Sakion-Team/Re-Kernel.git ./re-kernel
+        cd ./re-kernel
+        chmod +x ./install.sh
+        ./install.sh
+        echo "✅ Re-Kernel integrated"
         echo "::endgroup::"
 
     - name: Add BBG
