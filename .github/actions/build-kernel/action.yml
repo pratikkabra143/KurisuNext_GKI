@@ -36,6 +36,9 @@ inputs:
     required: true
   feature_ntsync:
     required: true
+  local_version:
+    required: false
+    default: 'pratikkabra143'
 
 runs:
   using: 'composite'
@@ -560,7 +563,12 @@ runs:
         cd "$GKI_ROOT"
         
         # Localversion branding
-        LOCALVERSION="-pratikkabra143"
+        RAW_LOCALVERSION="${{ inputs.local_version }}"
+        if [ -z "$RAW_LOCALVERSION" ]; then
+          LOCALVERSION="-pratikkabra143"
+        else
+          LOCALVERSION="-$RAW_LOCALVERSION"
+        fi
         echo "LOCALVERSION=$LOCALVERSION" >> $GITHUB_ENV
         
         # Build Timestamp support
