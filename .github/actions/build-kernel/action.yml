@@ -717,8 +717,8 @@ runs:
             LTO_FLAG="--lto=none"
           fi
           
-          # Build with --config=fast and defconfig fragment and --notrim to skip KMI symbol list processing entirely
-          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --notrim $LTO_FLAG --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist
+          # Build with --config=fast and --notrim to skip KMI symbol list processing entirely
+          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --notrim $LTO_FLAG --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64
           
           IMG_PATH="bazel-bin/common/kernel_aarch64/Image"
           BOOT_PATH=""
