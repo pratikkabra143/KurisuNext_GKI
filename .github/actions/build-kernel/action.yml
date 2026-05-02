@@ -126,7 +126,12 @@ runs:
         
         if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
           echo "Injecting KernelSU-Next..."
-          curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          if [ -n "${KSU_PRIVATE_TOKEN:-}" ]; then
+            git config --global url."https://${KSU_PRIVATE_TOKEN}@github.com/pratikkabra143/KernelSU-Next".insteadOf "https://github.com/pratikkabra143/KernelSU-Next"
+            curl -H "Authorization: token ${KSU_PRIVATE_TOKEN}" -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          else
+            curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+          fi
           
           cd KernelSU-Next/kernel
           COMMITS_COUNT=$(/usr/bin/git rev-list --count HEAD)
