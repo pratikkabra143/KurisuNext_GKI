@@ -42,6 +42,18 @@ runs:
         echo "Initializing repo for branch: $BRANCH"
         repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --depth=1
         
+        # Google often moves older kernel branches to a 'deprecated/' prefix in the kernel/common repo
+        # but forgets to update the manifest files, causing repo sync to fail.
+        # This dynamically checks if the branch was deprecated and patches the manifest.
+        # Extract the base branch name from the common-* manifest branch
+        FORMATTED_BRANCH="${BRANCH#common-}"
+        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+        
+        if echo "$REMOTE_BRANCH" | grep -q "deprecated"; then
+          echo "::warning::Detected deprecated branch: $FORMATTED_BRANCH. Patching manifest..."
+          sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
+        fi
+        
         echo "Syncing repositories..."
         repo sync -c -j$(nproc) --no-clone-bundle --no-tags --optimized-fetch
         
