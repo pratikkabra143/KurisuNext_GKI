@@ -76,6 +76,10 @@ on:
         description: 'Custom kernel build timestamp for uname -a (e.g. "Tue Feb 10 10:01:02 UTC 2026"). Leave empty for current time.'
         type: string
         default: ''
+      local_version:
+        description: 'Custom localversion (e.g. pratikkabra143)'
+        type: string
+        default: 'pratikkabra143'
       
       # 🛡️ Feature Flags
       feature_susfs:
@@ -306,6 +310,7 @@ jobs:
           feature_ds: ${{ inputs.feature_ds }}
           feature_ntsync: ${{ inputs.feature_ntsync }}
           feature_rek: ${{ inputs.feature_rek }}
+          local_version: ${{ inputs.local_version }}
           
       - name: 💾 Save ccache & LTO cache
         if: always() && inputs.clean_build == false
