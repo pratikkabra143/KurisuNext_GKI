@@ -93,21 +93,17 @@ on:
         default: false
       
       # 🛡️ Feature Flags
-      feature_susfs:
-        description: 'Enable SUSFS (Root Hiding)'
+      feature_profile:
+        description: 'Select Feature Profile (SUSFS/Baseband Guard(BBG)/BBR Congestion Control(BBR))'
         required: true
-        type: boolean
-        default: true
-      feature_bbg:
-        description: 'Enable Baseband Guard (BBG)'
-        required: true
-        type: boolean
-        default: true
-      feature_bbr:
-        description: 'Enable BBR Congestion Control'
-        required: true
-        type: boolean
-        default: true
+        type: choice
+        options:
+          - 'Vanilla (No SUSFS)'
+          - 'SUSFS Only'
+          - 'SUSFS + BBG'
+          - 'SUSFS + BBR'
+          - 'SUSFS + BBG + BBR'
+        default: 'SUSFS + BBG + BBR'
       feature_ttl:
         description: 'Enable TTL Target'
         required: true
@@ -361,9 +357,9 @@ jobs:
           clean_build: ${{ inputs.clean_build }}
           debug: ${{ inputs.debug }}
           build_timestamp: ${{ inputs.build_timestamp }}
-          feature_susfs: ${{ inputs.feature_susfs }}
-          feature_bbg: ${{ inputs.feature_bbg }}
-          feature_bbr: ${{ inputs.feature_bbr }}
+          feature_susfs: ${{ inputs.feature_profile != 'Vanilla (No SUSFS)' }}
+          feature_bbg: ${{ contains(inputs.feature_profile, 'BBG') }}
+          feature_bbr: ${{ contains(inputs.feature_profile, 'BBR') }}
           feature_ttl: ${{ inputs.feature_ttl }}
           feature_ip_set: ${{ inputs.feature_ip_set }}
           feature_unicode: ${{ inputs.feature_unicode }}
@@ -441,7 +437,7 @@ jobs:
           EOF
           fi
           
-          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+          if [ "${{ inputs.feature_profile }}" != "Vanilla (No SUSFS)" ]; then
             cat << EOF >> release_notes.md
           - **SUSFS** - Advanced hiding and security features
           EOF
@@ -451,13 +447,13 @@ jobs:
           ### 🛡️ Security & Privacy
           EOF
           
-          if [ "${{ inputs.feature_bbg }}" == "true" ]; then
+          if [[ "${{ inputs.feature_profile }}" == *"BBG"* ]]; then
             cat << EOF >> release_notes.md
           - **Baseband Guard (BBG)** - LSM-based baseband security
           EOF
           fi
           
-          if [ "${{ inputs.feature_susfs }}" == "true" ]; then
+          if [ "${{ inputs.feature_profile }}" != "Vanilla (No SUSFS)" ]; then
             cat << EOF >> release_notes.md
           - **SUSFS Hide Features**:
             - ✅ SUS_PATH - Hide suspicious paths
@@ -483,7 +479,7 @@ jobs:
           ### 🚀 Performance & Networking
           EOF
           
-          if [ "${{ inputs.feature_bbr }}" == "true" ]; then
+          if [[ "${{ inputs.feature_profile }}" == *"BBR"* ]]; then
             cat << EOF >> release_notes.md
           - **BBR** - Improved TCP congestion control
           EOF
