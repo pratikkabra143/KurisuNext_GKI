@@ -699,12 +699,11 @@ runs:
         # Patch mkcompile_h to hardcode timestamp (survives Bazel sandbox)
         MKCOMPILE="common/scripts/mkcompile_h"
         if [ -f "$MKCOMPILE" ]; then
-          # Safe quoting
-          printf -v SAFE_DATE '%q' "$DATESTR"
-          
-          # Inject the timestamp override at the top of the script using export
-          sed -i "2i export KBUILD_BUILD_TIMESTAMP=$SAFE_DATE" "$MKCOMPILE"
-          sed -i "3i export TIMESTAMP=$SAFE_DATE" "$MKCOMPILE"
+          # Use single-quote wrapping — mkcompile_h runs under #!/bin/sh (dash), not bash.
+          # printf %q produces backslash escapes that dash's export cannot parse ("bad variable name").
+          # Single-quoted strings are valid in both bash and dash.
+          sed -i "2i export KBUILD_BUILD_TIMESTAMP='$DATESTR'" "$MKCOMPILE"
+          sed -i "3i export TIMESTAMP='$DATESTR'" "$MKCOMPILE"
           
           # For kernels that don't have UTS_VERSION defined internally, explicitly define it
           if ! grep -q 'UTS_VERSION' "$MKCOMPILE"; then
