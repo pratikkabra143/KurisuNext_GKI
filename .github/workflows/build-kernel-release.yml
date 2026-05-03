@@ -132,7 +132,7 @@ on:
         description: 'Enable Re-Kernel Vendor Hooks'
         required: true
         type: boolean
-        default: true
+        default: false
 
 jobs:
   set-matrix:

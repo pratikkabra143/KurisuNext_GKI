@@ -615,7 +615,11 @@ runs:
         else
           LOCALVERSION="-$RAW_LOCALVERSION"
         fi
+        BUILD_USER="$RAW_LOCALVERSION"
+        BUILD_HOST="github"
         echo "LOCALVERSION=$LOCALVERSION" >> $GITHUB_ENV
+        echo "BUILD_USER=$BUILD_USER" >> $GITHUB_ENV
+        echo "BUILD_HOST=$BUILD_HOST" >> $GITHUB_ENV
         
         # Build Timestamp support
         if [ -n "${{ inputs.build_timestamp }}" ]; then
@@ -632,8 +636,16 @@ runs:
         # Patch mkcompile_h to hardcode timestamp (survives Bazel sandbox)
         MKCOMPILE="common/scripts/mkcompile_h"
         if [ -f "$MKCOMPILE" ]; then
-          if grep -q 'UTS_VERSION=' "$MKCOMPILE"; then
-            perl -pi -e "s{UTS_VERSION=\"\\\$\\\(.*?\\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $DATESTR\"}" "$MKCOMPILE"
+          # Safe quoting
+          printf -v SAFE_DATE '%q' "$DATESTR"
+          
+          # Inject the timestamp override at the top of the script using export
+          sed -i "2i export KBUILD_BUILD_TIMESTAMP=$SAFE_DATE" "$MKCOMPILE"
+          sed -i "3i export TIMESTAMP=$SAFE_DATE" "$MKCOMPILE"
+          
+          # For kernels that don't have UTS_VERSION defined internally, explicitly define it
+          if ! grep -q 'UTS_VERSION' "$MKCOMPILE"; then
+            perl -0777 -pi -e "s{cat <<EOF}{cat <<EOF\n#undef UTS_VERSION\n#define UTS_VERSION \"#1 SMP PREEMPT $DATESTR\" } unless /UTS_VERSION/" "$MKCOMPILE"
           fi
         fi
         
@@ -677,7 +689,7 @@ runs:
           fi
           
           # Build with --config=fast and defconfig fragment
-          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast $LTO_FLAG --jobs=$(nproc) --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist
+          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast $LTO_FLAG --jobs=$(nproc) --action_env=KBUILD_BUILD_TIMESTAMP="$DATESTR" --action_env=KBUILD_BUILD_USER="$BUILD_USER" --action_env=KBUILD_BUILD_HOST="$BUILD_HOST" --defconfig_fragment=//common:arch/arm64/configs/pratik_gki.fragment //common:kernel_aarch64_dist
           
           IMG_PATH="bazel-bin/common/kernel_aarch64/Image"
           BOOT_PATH=""
