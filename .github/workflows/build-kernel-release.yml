@@ -86,6 +86,11 @@ on:
         description: 'Custom localversion (e.g. pratikkabra143)'
         type: string
         default: 'pratikkabra143'
+      stealth_mode:
+        description: 'Stealth Mode: Hide custom kernel fingerprints from apps (Spoof host/user, empty localversion, clean AnyKernel3)'
+        required: true
+        type: boolean
+        default: false
       
       # 🛡️ Feature Flags
       feature_susfs:
@@ -366,6 +371,7 @@ jobs:
           feature_ntsync: ${{ inputs.feature_ntsync }}
           feature_rek: ${{ inputs.feature_rek }}
           local_version: ${{ inputs.local_version }}
+          stealth_mode: ${{ inputs.stealth_mode }}
           
       - name: 💾 Save ccache & LTO cache
         if: always() && inputs.clean_build == false

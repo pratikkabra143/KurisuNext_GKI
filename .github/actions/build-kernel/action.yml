@@ -42,6 +42,9 @@ inputs:
   local_version:
     required: false
     default: 'pratikkabra143'
+  stealth_mode:
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -608,15 +611,24 @@ runs:
         set -euo pipefail
         cd "$GKI_ROOT"
         
-        # Localversion branding
-        RAW_LOCALVERSION="${{ inputs.local_version }}"
-        if [ -z "$RAW_LOCALVERSION" ]; then
-          LOCALVERSION="-pratikkabra143"
+        # Stealth Mode & Localversion branding
+        if [ "${{ inputs.stealth_mode }}" = "true" ]; then
+          echo "🥷 Stealth Mode Enabled: Spoofing kernel identity"
+          RAW_LOCALVERSION=""
+          LOCALVERSION=""
+          BUILD_USER="build"
+          BUILD_HOST="localhost"
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> "$FRAGMENT_FILE"
         else
-          LOCALVERSION="-$RAW_LOCALVERSION"
+          RAW_LOCALVERSION="${{ inputs.local_version }}"
+          if [ -z "$RAW_LOCALVERSION" ]; then
+            LOCALVERSION="-pratikkabra143"
+          else
+            LOCALVERSION="-$RAW_LOCALVERSION"
+          fi
+          BUILD_USER="$RAW_LOCALVERSION"
+          BUILD_HOST="github"
         fi
-        BUILD_USER="$RAW_LOCALVERSION"
-        BUILD_HOST="github"
         echo "LOCALVERSION=$LOCALVERSION" >> $GITHUB_ENV
         echo "BUILD_USER=$BUILD_USER" >> $GITHUB_ENV
         echo "BUILD_HOST=$BUILD_HOST" >> $GITHUB_ENV
