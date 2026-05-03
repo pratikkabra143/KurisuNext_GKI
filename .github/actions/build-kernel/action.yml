@@ -430,11 +430,62 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Integrate Re-Kernel"
-        cd "$GKI_ROOT/common"
-        git clone https://github.com/Sakion-Team/Re-Kernel.git ./re-kernel
-        cd ./re-kernel
-        chmod +x ./install.sh
-        ./install.sh
+        cd "$GKI_ROOT"
+        TMP_REKERNEL=/tmp/rekernel
+        rm -rf "$TMP_REKERNEL"
+        git clone --depth 1 https://github.com/Sakion-Team/Re-Kernel.git "$TMP_REKERNEL"
+
+        # Prepare driver source
+        mkdir -p common/drivers/rekernel
+        cp "$TMP_REKERNEL/LKM-Source/rekernel.c" common/drivers/rekernel/
+        cp "$TMP_REKERNEL/LKM-Source/rekernel.h" common/drivers/rekernel/
+
+        # Generate Kconfig
+        cat > common/drivers/rekernel/Kconfig << 'EOF'
+        menu "Re:Kernel"
+        config REKERNEL
+            bool "Re:Kernel support (GKI Vendor Hooks)"
+            default y
+            help
+              Enable Re-Kernel support via GKI Vendor Hooks.
+
+        config REKERNEL_NETWORK
+            bool "Re:Kernel NetReceive unfreeze support"
+            depends on REKERNEL
+            default n
+        endmenu
+        EOF
+
+        # Generate Makefile
+        cat > common/drivers/rekernel/Makefile << 'EOF'
+        obj-$(CONFIG_REKERNEL) += rekernel.o
+        ccflags-$(CONFIG_REKERNEL_NETWORK) += -DNETWORK_FILTER
+        EOF
+
+        # Mount to driver tree
+        if ! grep -qF 'source "drivers/rekernel/Kconfig"' common/drivers/Kconfig; then
+          sed -i '/^endmenu$/i source "drivers/rekernel/Kconfig"' common/drivers/Kconfig
+        fi
+        if ! grep -qF 'obj-$(CONFIG_REKERNEL) += rekernel/' common/drivers/Makefile; then
+          echo 'obj-$(CONFIG_REKERNEL) += rekernel/' >> common/drivers/Makefile
+        fi
+
+        # Enable Kernel Version Macro
+        REKERNEL_H="common/drivers/rekernel/rekernel.h"
+        VERSION_MACRO="KERNEL_$(echo "$VERSION_MAJOR" | tr '.' '_')"
+        if grep -q "^// #define ${VERSION_MACRO}$" "$REKERNEL_H"; then
+          sed -i "s|^// #define ${VERSION_MACRO}$|#define ${VERSION_MACRO}|" "$REKERNEL_H"
+        fi
+
+        # Fix header include path
+        sed -i 's|#include <../android/binder_internal.h>|#include "../../drivers/android/binder_internal.h"|g' common/drivers/rekernel/rekernel.c
+        # Add seq_file dependency
+        grep -qF '#include <linux/seq_file.h>' common/drivers/rekernel/rekernel.c || sed -i '/#include <trace\/hooks\/signal.h>/a #include <linux/seq_file.h>' common/drivers/rekernel/rekernel.c
+
+        # Add to fragment
+        echo "CONFIG_REKERNEL=y" >> "$FRAGMENT_FILE"
+        echo "CONFIG_REKERNEL_NETWORK=y" >> "$FRAGMENT_FILE"
+        
         echo "✅ Re-Kernel integrated"
         echo "::endgroup::"
 
