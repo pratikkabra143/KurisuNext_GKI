@@ -97,7 +97,7 @@ runs:
       run: |
         set -euo pipefail
         git clone https://github.com/pratikkabra143/AnyKernel3-GKI.git -b master "$AK3_DIR"
-        git clone https://github.com/TheWildJames/kernel_patches.git "$PATCHES_DIR"
+        git clone https://github.com/pratikkabra143/kernel_patches.git "$PATCHES_DIR"
         
         if [ "${{ inputs.feature_susfs }}" = "true" ]; then
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b master "$SUSFS_DIR"
@@ -124,19 +124,19 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo "::group::Add KernelSU / KernelSU-Next"
+        echo "::group::Add KernelSU / KurisuNext"
         cd "$GKI_ROOT/common"
         
         if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-          echo "Injecting KernelSU-Next..."
+          echo "Injecting KurisuNext..."
           if [ -n "${KSU_PRIVATE_TOKEN:-}" ]; then
-            git config --global url."https://${KSU_PRIVATE_TOKEN}@github.com/pratikkabra143/KernelSU-Next".insteadOf "https://github.com/pratikkabra143/KernelSU-Next"
-            curl -H "Authorization: token ${KSU_PRIVATE_TOKEN}" -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+            git config --global url."https://${KSU_PRIVATE_TOKEN}@github.com/pratikkabra143/KurisuNext".insteadOf "https://github.com/pratikkabra143/KurisuNext"
+            curl -H "Authorization: token ${KSU_PRIVATE_TOKEN}" -LSs "https://raw.githubusercontent.com/pratikkabra143/KurisuNext/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
           else
-            curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KernelSU-Next/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
+            curl -LSs "https://raw.githubusercontent.com/pratikkabra143/KurisuNext/dev/kernel/setup.sh" | bash -s "${{ inputs.ksu_hash }}"
           fi
           
-          cd KernelSU-Next/kernel
+          cd KurisuNext/kernel
           COMMITS_COUNT=$(/usr/bin/git rev-list --count HEAD)
           if [ $COMMITS_COUNT -lt 2684 ]; then BASE_VERSION=10200; else BASE_VERSION=30000; fi
           KSU_VERSION=$(expr $COMMITS_COUNT "+" $BASE_VERSION)
@@ -217,7 +217,7 @@ runs:
         case "$susfs_version" in
           "v2.0.0"|"v2.1.0")
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd common/KernelSU-Next
+              cd common/KurisuNext
               patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
               for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
                 patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
@@ -233,7 +233,7 @@ runs:
             ;;
           *)
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd common/KernelSU-Next
+              cd common/KurisuNext
               patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
               for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
                 patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
@@ -857,7 +857,7 @@ runs:
           KSU_SHA="${KSU_COMMIT_SHA:-unknown}"
           if [ "$KSU_SHA" != "unknown" ]; then
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              echo "| **KSUN Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/pratikkabra143/KernelSU-Next/commit/$KSU_SHA) |"
+              echo "| **KSUN Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/pratikkabra143/KurisuNext/commit/$KSU_SHA) |"
             else
               echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/tiann/KernelSU/commit/$KSU_SHA) |"
             fi

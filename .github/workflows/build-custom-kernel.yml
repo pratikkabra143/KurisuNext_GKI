@@ -451,8 +451,8 @@ jobs:
           EOF
           if [ "$KSU_TYPE" == "KSUN" ]; then
             cat << EOF >> release_notes.md
-          - **KernelSU Next Manager**  
-            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+          - **KurisuNext Manager**  
+            → [GitHub Release](https://github.com/pratikkabra143/KurisuNext/releases)
           EOF
           elif [ "$KSU_TYPE" == "KSU" ]; then
             cat << EOF >> release_notes.md
