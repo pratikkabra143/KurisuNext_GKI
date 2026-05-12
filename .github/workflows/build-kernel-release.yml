@@ -26,7 +26,7 @@ on:
         description: 'Enter KernelSU build json'
         required: true
         type: string
-        default: '[{"type":"ksun","hash":"2210069c8a6960a504620543609e1149bf74de11"}]'
+        default: '[{"type":"ksun","hash":"dev"}]'
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string

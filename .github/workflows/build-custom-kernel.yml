@@ -25,7 +25,7 @@ on:
         description: 'KernelSU Branch or Commit Hash (e.g. dev or main)'
         required: true
         type: string
-        default: '2210069c8a6960a504620543609e1149bf74de11'
+        default: 'dev'
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string

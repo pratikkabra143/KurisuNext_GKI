@@ -215,30 +215,47 @@ runs:
 
         # Apply KSU integration patch based on version
         case "$susfs_version" in
+          "v1.5.8")
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KurisuNext
+              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_apk_sign.c.patch"
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_core_hook.c.patch"
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_selinux.c.patch"
+              patch -p1 --forward --fuzz=3 < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_ksud.c.patch"
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward --fuzz=3 < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+              cd ../..
+            fi
+            ;;
+          "v1.5.9"|"v1.5.10"|"v1.5.11"|"v1.5.12")
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              cd common/KurisuNext
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+              done
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
+              cd ../..
+            else
+              cd common/KernelSU
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+              cd ../..
+            fi
+            ;;
           "v2.0.0"|"v2.1.0")
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               cd common/KurisuNext
               patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
-                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
+              # Apply all fix patches directly
+              for patch_file in "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version"/*.patch; do
+                if [ -f "$patch_file" ]; then
+                  echo "Applying fix patch: $(basename "$patch_file")"
+                  patch -p1 -F3 --forward < "$patch_file" || true
+                fi
               done
-              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
-              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch" || true
-              cd ../..
-            else
-              cd common/KernelSU
-              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              cd ../..
-            fi
-            ;;
-          *)
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              cd common/KurisuNext
-              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
-                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
-              done
-              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
               cd ../..
             else
               cd common/KernelSU
