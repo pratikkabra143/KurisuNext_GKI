@@ -61,6 +61,13 @@ runs:
         IFS='.' read -ra VPARTS <<< "$VERSION_SUBLEVEL"
         VERSION_MAJOR="${VPARTS[0]}.${VPARTS[1]}"
         
+        # Extract numeric sublevel (e.g., 186 from 5.10.186) for precise fix targeting
+        if [ ${#VPARTS[@]} -ge 3 ] && [[ "${VPARTS[2]}" =~ ^[0-9]+$ ]]; then
+          SUBLEVEL="${VPARTS[2]}"
+        else
+          SUBLEVEL="999"  # Assume latest if not parseable (e.g., X in 6.6.X-android15-lts)
+        fi
+        
         ANDROID_VER="${PARTS[1]}"
         
         if [ "${PARTS[2]}" = "lts" ]; then
@@ -77,6 +84,7 @@ runs:
         echo "VERSION_MAJOR=$VERSION_MAJOR" >> $GITHUB_ENV
         echo "ANDROID_VER=$ANDROID_VER" >> $GITHUB_ENV
         echo "VERSION_SUBLEVEL=$VERSION_SUBLEVEL" >> $GITHUB_ENV
+        echo "SUBLEVEL=$SUBLEVEL" >> $GITHUB_ENV
         
         echo "✅ Detected Branch: $BRANCH"
 
@@ -271,9 +279,13 @@ runs:
         
         cd common
         
-        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ] && [ "${SUBLEVEL:-999}" -le 58 ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+            echo "Adding missing #include <trace/hooks/fs.h> to fs/namespace.c"
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
+            echo "NAMESPACE_FS_FIX=true" >> $GITHUB_ENV
+          else
+            echo "NAMESPACE_FS_FIX=already_present" >> $GITHUB_ENV
           fi
         fi
         
@@ -349,13 +361,58 @@ runs:
         KERNEL_VERSION="${VERSION_MAJOR}"
         MIN_VERSION="5.16"
         
-        # Glibc 2.38 Compatibility Fix for older kernels
-        if [ "$VERSION_MAJOR" = "5.10" ] || [ "$VERSION_MAJOR" = "5.15" ]; then
-          echo "Applying Glibc 2.38 fix for parse-options.c..."
-          sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
-          sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
-          sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
-          sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+        # Glibc 2.38+ Compatibility Fixes
+        GLIBC_VERSION="$(ldd --version 2>/dev/null | head -n 1 | awk '{print $NF}')"
+        echo "Detected GLIBC version: $GLIBC_VERSION"
+        MAKEFILE_FIXED="skipped"
+        PARSE_OPTIONS_FIXED="skipped"
+        if [ "$(printf '%s\n' "2.38" "$GLIBC_VERSION" | sort -V | head -n 1)" = "2.38" ]; then
+          # Fix 1: resolve_btfids Makefile EXTRA_CFLAGS fix
+          if [ -f tools/bpf/resolve_btfids/Makefile ]; then
+            if grep -q '$(Q)$(MAKE) -C $(SUBCMD_SRC) OUTPUT=$(abspath $(dir $@))/ $(abspath $@)' tools/bpf/resolve_btfids/Makefile; then
+              echo "Applying resolve_btfids Makefile EXTRA_CFLAGS fix..."
+              sed -i '/$(Q)$(MAKE) -C $(SUBCMD_SRC) OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' tools/bpf/resolve_btfids/Makefile
+              MAKEFILE_FIXED="true"
+            elif grep -q 'EXTRA_CFLAGS' tools/bpf/resolve_btfids/Makefile; then
+              echo "resolve_btfids Makefile EXTRA_CFLAGS already present."
+              MAKEFILE_FIXED="already_fixed"
+            else
+              echo "resolve_btfids Makefile pattern not found."
+              MAKEFILE_FIXED="not_found"
+            fi
+          fi
+        
+          # Fix 2: parse-options.c C99 variable declaration fix for older kernels
+          NEEDS_PARSE_FIX=false
+          if { [ "$ANDROID_VER" = "android12" ] && [ "$VERSION_MAJOR" = "5.10" ]; } || \
+             { [ "$ANDROID_VER" = "android13" ] && [ "$VERSION_MAJOR" = "5.10" ] && [ "${SUBLEVEL:-999}" -le 186 ]; } || \
+             { [ "$ANDROID_VER" = "android13" ] && [ "$VERSION_MAJOR" = "5.15" ] && [ "${SUBLEVEL:-999}" -le 119 ]; } || \
+             { [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "5.15" ] && [ "${SUBLEVEL:-999}" -le 110 ]; }; then
+            NEEDS_PARSE_FIX=true
+          fi
+          if [ "$NEEDS_PARSE_FIX" = "true" ]; then
+            echo "Applying Glibc 2.38 fix for parse-options.c..."
+            sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+            sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+            sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+            sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+            PARSE_OPTIONS_FIXED="true"
+          fi
+        else
+          echo "GLIBC < 2.38, skipping Makefile and parse-options.c fixes."
+        fi
+        
+        # Fix 3: mm/mmap.c VM_PAD_MASK API compatibility
+        MMAP_VM_FLAGS_FIX="not_applicable"
+        if { [ "$ANDROID_VER" = "android12" ] && [ "$VERSION_MAJOR" = "5.10" ] && [ "${SUBLEVEL:-0}" -eq 226 ]; } || \
+           { [ "$ANDROID_VER" = "android13" ] && [ "$VERSION_MAJOR" = "5.10" ] && [ "${SUBLEVEL:-0}" -eq 223 ]; } || \
+           { [ "$ANDROID_VER" = "android13" ] && [ "$VERSION_MAJOR" = "5.15" ] && [ "${SUBLEVEL:-0}" -eq 167 ]; } || \
+           { [ "$ANDROID_VER" = "android14" ] && [ "$VERSION_MAJOR" = "5.15" ] && [ "${SUBLEVEL:-0}" -eq 167 ]; }; then
+          if [ -f mm/mmap.c ]; then
+            echo "Applying mm/mmap.c VM_PAD_MASK fix..."
+            sed -i 's/\s*vm_flags_clear(new_vma, VM_PAD_MASK);/                new_vma->vm_flags \&= ~VM_PAD_MASK;/' mm/mmap.c
+            MMAP_VM_FLAGS_FIX="true"
+          fi
         fi
         
         # Samsung & Xiaomi 6.6 ABI Compatibility (WiFi/Bluetooth fix)
@@ -458,6 +515,23 @@ runs:
         # patch -p1 -F3 --forward < "$PATCHES_DIR/common/use_unlikely_wrap_cpufreq.patch" || true
         
         echo "✅ Other patches applied"
+        
+        # Kernel Fixes Summary
+        echo "## Kernel Fixes Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Kernel Version:** ${ANDROID_VER} + ${VERSION_MAJOR} (sublevel ${SUBLEVEL:-unknown})" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "### Fix Status" >> "$GITHUB_STEP_SUMMARY"
+        
+        if [ "$(printf '%s\n' "2.38" "${GLIBC_VERSION:-0}" | sort -V | head -n 1)" = "2.38" ]; then
+          echo "- Makefile EXTRA_CFLAGS fix: ${MAKEFILE_FIXED:-skipped}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- parse-options.c fix: ${PARSE_OPTIONS_FIXED:-skipped}" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "- Makefile EXTRA_CFLAGS fix: skipped (GLIBC < 2.38)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- parse-options.c fix: skipped (GLIBC < 2.38)" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "- fs/namespace.c include fix: ${NAMESPACE_FS_FIX:-not_applicable}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- mm/mmap.c VM_PAD_MASK fix: ${MMAP_VM_FLAGS_FIX:-not_applicable}" >> "$GITHUB_STEP_SUMMARY"
         echo "::endgroup::"
 
     - name: Integrate Re-Kernel
