@@ -358,17 +358,36 @@ runs:
           sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
         fi
         
-        # # Samsung & Xiaomi 6.6 ABI Compatibility
-        # if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
-        #   echo "Patching ABI symbols for Samsung/Xiaomi compatibility..."
-        #   if [ -f android/abi_gki_aarch64_galaxy ]; then
-        #     grep -q "kdp_set_cred_non_rcu" android/abi_gki_aarch64_galaxy || echo "  kdp_set_cred_non_rcu" >> android/abi_gki_aarch64_galaxy
-        #     grep -q "min_kdp" android/abi_gki_aarch64_galaxy || echo "  min_kdp" >> android/abi_gki_aarch64_galaxy
-        #   fi
-        #   if [ -f android/abi_gki_aarch64_xiaomi ]; then
-        #     grep -q "device_find_any_child" android/abi_gki_aarch64_xiaomi || echo "  device_find_any_child" >> android/abi_gki_aarch64_xiaomi
-        #   fi
-        # fi
+        # Samsung & Xiaomi 6.6 ABI Compatibility (WiFi/Bluetooth fix)
+        if [ "$ANDROID_VER" = "android15" ] && [ "$VERSION_MAJOR" = "6.6" ]; then
+          echo "Patching ABI symbols for Samsung/Xiaomi compatibility..."
+
+          # Samsung: Add KDP symbols, apply patch, and integrate min_kdp driver
+          SAMSUNG_SYMBOL_LIST=android/abi_gki_aarch64_galaxy
+          if [ -f "$SAMSUNG_SYMBOL_LIST" ]; then
+            echo "kdp_set_cred_non_rcu" >> "$SAMSUNG_SYMBOL_LIST"
+            echo "kdp_usecount_dec_and_test" >> "$SAMSUNG_SYMBOL_LIST"
+            echo "kdp_usecount_inc" >> "$SAMSUNG_SYMBOL_LIST"
+
+            SAMSUNG_PATCH="$PATCHES_DIR/samsung/min_kdp/add-min_kdp-symbols.patch"
+            if [ -f "$SAMSUNG_PATCH" ]; then
+              if patch -p1 --dry-run < "$SAMSUNG_PATCH"; then
+                patch -p1 --no-backup-if-mismatch < "$SAMSUNG_PATCH"
+              fi
+            fi
+
+            if [ -f "$PATCHES_DIR/samsung/min_kdp/min_kdp.c" ]; then
+              cp "$PATCHES_DIR/samsung/min_kdp/min_kdp.c" drivers/min_kdp.c
+              echo "obj-y += min_kdp.o" >> drivers/Makefile
+            fi
+          fi
+
+          # Xiaomi: Add missing device_find_any_child symbol
+          XIAOMI_SYMBOL_LIST=android/abi_gki_aarch64_xiaomi
+          if [ -f "$XIAOMI_SYMBOL_LIST" ]; then
+            echo "device_find_any_child" >> "$XIAOMI_SYMBOL_LIST"
+          fi
+        fi
         
         if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
           echo "Patching ptrace!"
