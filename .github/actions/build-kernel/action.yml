@@ -243,13 +243,13 @@ runs:
               cd common/KurisuNext
               patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
               for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
-                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.c.patch"
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch"
               done
               patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_kernel_compat.c.patch"
               cd ../..
             else
               cd common/KernelSU
-              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+              patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
               cd ../..
             fi
             ;;
@@ -257,13 +257,11 @@ runs:
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               cd common/KurisuNext
               patch -p1 --forward < "$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              # Apply all fix patches directly
-              for patch_file in "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version"/*.patch; do
-                if [ -f "$patch_file" ]; then
-                  echo "Applying fix patch: $(basename "$patch_file")"
-                  patch -p1 -F3 --forward < "$patch_file" || true
-                fi
+              for file in $(find ./kernel -maxdepth 2 -name "*.rej" -exec basename {} .rej \;); do
+                patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/fix_$file.patch" || true
               done
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch" || true
+              patch -p1 --forward < "$PATCHES_DIR/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch" || true
               cd ../..
             else
               cd common/KernelSU
