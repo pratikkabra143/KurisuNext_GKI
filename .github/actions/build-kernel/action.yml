@@ -201,6 +201,17 @@ runs:
         fi
         echo "::endgroup::"
 
+    - name: Fix KurisuNext
+      if: ${{ inputs.ksu_type == 'KSUN' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Fix KurisuNext"
+        cd "$GKI_ROOT/common/KurisuNext"
+        cp "$GITHUB_WORKSPACE/patches/ksun/static.patch" .
+        patch -p1 < static.patch
+        echo "::endgroup::"
+
     - name: Apply SUSFS Patches
       if: ${{ inputs.feature_susfs == 'true' }}
       shell: bash
