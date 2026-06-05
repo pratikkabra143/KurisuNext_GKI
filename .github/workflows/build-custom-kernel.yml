@@ -33,31 +33,31 @@ on:
       android12-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android12-5.10'
         type: string
-        default: 'ce2c2b2dea28c89d33f61af898cc18a93bf65ae9'
+        default: '15de9fa1718d803ad7a01b63d9681e2f6e33b34a'
       android13-5_10_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android13-5.10'
         type: string
-        default: 'ae97739f943116117dced3985078c9026d32d69d'
+        default: 'ee023e380a602759002574353e2e9e795db90c34'
       android13-5_15_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android13-5.15'
         type: string
-        default: '529919fbc9f8aee6ee70eb3a8890ef33af0a109c'
+        default: 'e4daa17da1fdec0352851b3450a5adbfcaa64ef2'
       android14-5_15_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android14-5.15'
         type: string
-        default: '1822802e363d4e69961b9f43d9f28d85cd905151'
+        default: '74de52bf2036c7be887143a792aee5bc165af8d0'
       android14-6_1_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android14-6.1'
         type: string
-        default: 'd1327b62e0854603cfc26e2226e0a993ec9b0656'
+        default: 'f742a65ec92611cb3d82fcf743c02c91ffd4ebe9'
       android15-6_6_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android15-6.6'
         type: string
-        default: '676d202ed2cc322a2f90bcb2b56bc4f6a864acb8'
+        default: '48c34a8f5754883bf8ac5e2886e0ac838eb9a0cf'
       android16-6_12_susfs_branch_or_commit:
         description: 'Enter SusFS Branch or commit hash for android16-6.12'
         type: string
-        default: 'd20fb81b5f17e66ffeac1321a1257d53e2d16e53'
+        default: 'a7a619d9b9af44575256b7cfbaf11e095ae20fa9'
       optimize_level:
         description: 'Compiler optimization level'
         required: true
